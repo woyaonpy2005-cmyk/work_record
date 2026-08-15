@@ -6,7 +6,7 @@ const bcrypt = require('bcryptjs');
 const app = express();
 const PORT = process.env.PORT || 3000;
 
-// 💡 提取自你的 project 连接字符串 (使用真实的密码与正确的 Cluster0 域名)[cite: 3]
+// 💡 提取自你的 project 连接字符串
 const MONGO_URI = process.env.MONGO_URI || "mongodb+srv://woyaonpy2005_db_user:Lim050831.@cluster0.ztvp8bb.mongodb.net/attendance_db?appName=Cluster0";
 
 app.use(express.json());
@@ -30,18 +30,17 @@ const attendanceSchema = new mongoose.Schema({
   date: { type: String, required: true }, // YYYY-MM-DD
   clockIn: { type: Date, default: null },
   clockOut: { type: Date, default: null },
-  workHours: { type: Number, default: 0 }, // 扣除1小时休息后的实际工时
-  otHours: { type: Number, default: 0 },   // 超过8小时算OT
+  workHours: { type: Number, default: 0 },
+  otHours: { type: Number, default: 0 },
   isManual: { type: Boolean, default: false }
 });
 const Attendance = mongoose.model('Attendance', attendanceSchema);
 
-// 连接 MongoDB Atlas 云数据库并初始化 Admin 账号[cite: 3]
+// 连接 MongoDB Atlas
 mongoose.connect(MONGO_URI)
   .then(async () => {
     console.log('✅ 成功连接至 MongoDB Atlas 云数据库');
     
-    // 初始化默认 Admin 账号 (admin123 / 123456789)
     const adminExists = await User.findOne({ userId: 'admin123' });
     if (!adminExists) {
       const hashedPassword = await bcrypt.hash('123456789', 10);
@@ -121,7 +120,7 @@ app.get('/api/admin/employees', async (req, res) => {
   res.json(employees);
 });
 
-// ✨ Admin API：修改员工密码（功能 2）
+// Admin API：修改员工密码
 app.post('/api/admin/reset-password', async (req, res) => {
   if (!req.session.user || req.session.user.role !== 'admin') {
     return res.status(403).json({ message: '无权限操作' });
@@ -136,7 +135,7 @@ app.post('/api/admin/reset-password', async (req, res) => {
   res.json({ message: `员工 ${targetUserId} 的密码已成功重置！` });
 });
 
-// 打卡数据 API：获取指定员工考勤数据
+// 获取指定员工考勤数据
 app.get('/api/attendance/:targetUserId', async (req, res) => {
   if (!req.session.user) return res.status(401).json({ message: '未登录' });
   
@@ -184,13 +183,16 @@ app.post('/api/attendance/toggle', async (req, res) => {
   }
 });
 
-// 手动添加/修改记录 API（功能 1：支持通过日期修改旧记录）
+// 手动添加/修改记录 API
 app.post('/api/attendance/manual', async (req, res) => {
   const user = req.session.user;
-  if (!user || user.role !== 'employee') return res.status(403).json({ message: '仅员工能进行此操作' });
+  if (!user) return res.status(401).json({ message: '未登录' });
 
-  const { date, clockIn, clockOut } = req.body;
+  const { date, clockIn, clockOut, targetUserId } = req.body;
   if (!date || !clockIn || !clockOut) return res.status(400).json({ message: '请完整填写日期与时间' });
+
+  // 确定要修改的目标用户
+  const updateUserId = (user.role === 'admin' && targetUserId) ? targetUserId : user.userId;
 
   const inDateTime = new Date(`${date}T${clockIn}`);
   const outDateTime = new Date(`${date}T${clockOut}`);
@@ -198,15 +200,31 @@ app.post('/api/attendance/manual', async (req, res) => {
 
   const { workHours, otHours } = calculateHours(inDateTime, outDateTime);
   await Attendance.findOneAndUpdate(
-    { userId: user.userId, date },
-    { userId: user.userId, date, clockIn: inDateTime, clockOut: outDateTime, workHours, otHours, isManual: true },
+    { userId: updateUserId, date },
+    { userId: updateUserId, date, clockIn: inDateTime, clockOut: outDateTime, workHours, otHours, isManual: true },
     { upsert: true, new: true }
   );
 
   res.json({ message: '打卡记录已更新/保存成功！' });
 });
 
-// ==================== 3. 前端页面路由（直接返回HTML） ====================
+// ✨ 新增：删除打卡记录 API
+app.delete('/api/attendance/delete', async (req, res) => {
+  const user = req.session.user;
+  if (!user) return res.status(401).json({ message: '未登录' });
+
+  const { date, targetUserId } = req.body;
+  if (!date) return res.status(400).json({ message: '缺少参数：日期' });
+
+  const deleteUserId = (user.role === 'admin' && targetUserId) ? targetUserId : user.userId;
+
+  const deleted = await Attendance.findOneAndDelete({ userId: deleteUserId, date });
+  if (!deleted) return res.status(404).json({ message: '未找到该日期的打卡记录' });
+
+  res.json({ message: '记录已成功删除！' });
+});
+
+// ==================== 3. 前端页面路由 ====================
 
 // 页面 1：登录界面
 app.get('/', (req, res) => {
@@ -260,7 +278,7 @@ app.get('/', (req, res) => {
   `);
 });
 
-// 页面 2：Admin 控制台（添加了密码修改功能）
+// 页面 2：Admin 控制台
 app.get('/admin', (req, res) => {
   res.send(`
     <!DOCTYPE html>
@@ -277,7 +295,6 @@ app.get('/admin', (req, res) => {
           <button onclick="logout()" class="bg-red-500 text-white px-4 py-2 rounded-lg">退出登录</button>
         </div>
 
-        <!-- 1. 添加新员工 -->
         <div class="bg-white p-6 rounded-xl shadow-sm">
           <h2 class="text-xl font-bold mb-4">添加新员工</h2>
           <div class="grid grid-cols-3 gap-4">
@@ -288,7 +305,6 @@ app.get('/admin', (req, res) => {
           <button onclick="addEmployee()" class="mt-4 bg-green-600 text-white px-6 py-2 rounded-lg font-semibold hover:bg-green-700 transition">添加员工</button>
         </div>
 
-        <!-- 🔑 2. 重置员工密码功能 -->
         <div class="bg-white p-6 rounded-xl shadow-sm">
           <h2 class="text-xl font-bold mb-4">🔑 重置员工密码</h2>
           <div class="grid grid-cols-2 gap-4">
@@ -300,9 +316,8 @@ app.get('/admin', (req, res) => {
           <button onclick="resetPassword()" class="mt-4 bg-orange-500 text-white px-6 py-2 rounded-lg font-semibold hover:bg-orange-600 transition">修改密码</button>
         </div>
 
-        <!-- 3. 员工列表 -->
         <div class="bg-white p-6 rounded-xl shadow-sm">
-          <h2 class="text-xl font-bold mb-4">员工列表 (点击员工查看其打卡页)</h2>
+          <h2 class="text-xl font-bold mb-4">员工列表 (点击员工查看/修改其打卡页)</h2>
           <div id="employeeList" class="grid grid-cols-2 gap-4"></div>
         </div>
       </div>
@@ -319,7 +334,6 @@ app.get('/admin', (req, res) => {
           const res = await fetch('/api/admin/employees');
           const list = await res.json();
           
-          // 渲染员工卡片列表
           const container = document.getElementById('employeeList');
           container.innerHTML = list.map(emp => \`
             <div onclick="viewEmployee('\${emp.userId}')" class="p-4 border rounded-xl cursor-pointer hover:border-blue-500 hover:shadow-md transition bg-gray-50">
@@ -328,7 +342,6 @@ app.get('/admin', (req, res) => {
             </div>
           \`).join('');
 
-          // 填充重置密码下拉框列表
           const select = document.getElementById('resetUserId');
           select.innerHTML = '<option value="">-- 选择要重置密码的员工 --</option>' + 
             list.map(emp => \`<option value="\${emp.userId}">\${emp.userId} (\${emp.name})</option>\`).join('');
@@ -464,7 +477,7 @@ app.get('/employee', (req, res) => {
           </div>
         </div>
 
-        <!-- 历史记录表格（加入了修改按钮） -->
+        <!-- 历史记录表格（修复修改按键，并添加删除按键） -->
         <div class="bg-white p-6 rounded-xl shadow-sm">
           <h3 class="text-lg font-bold mb-4">打卡历史记录</h3>
           <table class="w-full text-left border-collapse">
@@ -490,6 +503,16 @@ app.get('/employee', (req, res) => {
         let currentUser = null;
         let targetUserId = '';
 
+        // 将 ISO 时间转换成 input[type=time] 识别的 HH:mm 格式
+        function formatToHHMM(dateIsoStr) {
+          if (!dateIsoStr) return '';
+          const d = new Date(dateIsoStr);
+          if (isNaN(d.getTime())) return '';
+          const hours = String(d.getHours()).padStart(2, '0');
+          const minutes = String(d.getMinutes()).padStart(2, '0');
+          return \`\${hours}:\${minutes}\`;
+        }
+
         async function init() {
           const res = await fetch('/api/me');
           if (!res.ok) return location.href = '/';
@@ -497,7 +520,6 @@ app.get('/employee', (req, res) => {
           if (viewUserId && currentUser.role === 'admin') {
             targetUserId = viewUserId;
             document.getElementById('clockArea').classList.add('hidden');
-            document.getElementById('manualArea').classList.add('hidden');
           } else {
             targetUserId = currentUser.userId;
           }
@@ -532,8 +554,8 @@ app.get('/employee', (req, res) => {
 
           const table = document.getElementById('historyTable');
           table.innerHTML = data.history.map(row => {
-            const inTimeStr = row.clockIn ? new Date(row.clockIn).toTimeString().substring(0, 5) : '';
-            const outTimeStr = row.clockOut ? new Date(row.clockOut).toTimeString().substring(0, 5) : '';
+            const inTimeStr = formatToHHMM(row.clockIn);
+            const outTimeStr = formatToHHMM(row.clockOut);
             
             return \`
               <tr>
@@ -543,20 +565,39 @@ app.get('/employee', (req, res) => {
                 <td class="p-3 font-semibold text-blue-600">\${row.workHours} 小时</td>
                 <td class="p-3 font-semibold text-orange-600">\${row.otHours} 小时</td>
                 <td class="p-3"><span class="px-2 py-1 text-xs rounded \${row.isManual ? 'bg-purple-100 text-purple-700' : 'bg-gray-100 text-gray-600'}">\${row.isManual ? '手动补录/修改' : '实时打卡'}</span></td>
-                <td class="p-3 no-print">
-                  \${currentUser.role === 'employee' ? \`<button onclick="editRow('\${row.date}', '\${inTimeStr}', '\${outTimeStr}')" class="text-indigo-600 hover:text-indigo-900 font-semibold text-xs border border-indigo-200 px-2 py-1 rounded hover:bg-indigo-50 transition">✏️ 修改</button>\` : '-'}
+                <td class="p-3 no-print space-x-2">
+                  <button onclick="editRow('\${row.date}', '\${inTimeStr}', '\${outTimeStr}')" class="text-indigo-600 hover:text-indigo-900 font-semibold text-xs border border-indigo-200 px-2 py-1 rounded hover:bg-indigo-50 transition">✏️ 修改</button>
+                  <button onclick="deleteRow('\${row.date}')" class="text-red-600 hover:text-red-900 font-semibold text-xs border border-red-200 px-2 py-1 rounded hover:bg-red-50 transition">🗑️ 删除</button>
                 </td>
               </tr>
             \`;
           }).join('');
         }
 
-        // ✨ 修改按键回填数据
+        // 修改按键点击响应：精准填入表单并平滑滚动
         function editRow(date, clockIn, clockOut) {
           document.getElementById('mDate').value = date;
           document.getElementById('mIn').value = clockIn;
           document.getElementById('mOut').value = clockOut;
-          window.scrollTo({ top: document.getElementById('manualArea').offsetTop - 20, behavior: 'smooth' });
+          
+          const targetArea = document.getElementById('manualArea');
+          targetArea.scrollIntoView({ behavior: 'smooth' });
+        }
+
+        // 删除按键响应
+        async function deleteRow(date) {
+          if (!confirm(\`确定要删除 \${date} 的打卡记录吗？\`)) return;
+
+          const res = await fetch('/api/attendance/delete', {
+            method: 'DELETE',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ date, targetUserId })
+          });
+          const data = await res.json();
+          alert(data.message);
+          if (res.ok) {
+            loadAttendanceData();
+          }
         }
 
         async function toggleClock() {
@@ -570,10 +611,11 @@ app.get('/employee', (req, res) => {
           const date = document.getElementById('mDate').value;
           const clockIn = document.getElementById('mIn').value;
           const clockOut = document.getElementById('mOut').value;
+          
           const res = await fetch('/api/attendance/manual', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ date, clockIn, clockOut })
+            body: JSON.stringify({ date, clockIn, clockOut, targetUserId })
           });
           const data = await res.json();
           alert(data.message);
