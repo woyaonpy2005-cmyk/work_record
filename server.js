@@ -191,7 +191,6 @@ app.post('/api/attendance/manual', async (req, res) => {
   const { date, clockIn, clockOut, targetUserId } = req.body;
   if (!date || !clockIn || !clockOut) return res.status(400).json({ message: '请完整填写日期与时间' });
 
-  // 确定要修改的目标用户
   const updateUserId = (user.role === 'admin' && targetUserId) ? targetUserId : user.userId;
 
   const inDateTime = new Date(`${date}T${clockIn}`);
@@ -208,7 +207,7 @@ app.post('/api/attendance/manual', async (req, res) => {
   res.json({ message: '打卡记录已更新/保存成功！' });
 });
 
-// ✨ 新增：删除打卡记录 API
+// 删除打卡记录 API
 app.delete('/api/attendance/delete', async (req, res) => {
   const user = req.session.user;
   if (!user) return res.status(401).json({ message: '未登录' });
@@ -464,11 +463,11 @@ app.get('/employee', (req, res) => {
               <input type="date" id="mDate" class="border p-2 rounded-lg w-full">
             </div>
             <div>
-              <label class="text-xs text-gray-400">上班时间</label>
+              <label class="text-xs text-gray-400">上班时间 (24小时制)</label>
               <input type="time" id="mIn" class="border p-2 rounded-lg w-full">
             </div>
             <div>
-              <label class="text-xs text-gray-400">下班时间</label>
+              <label class="text-xs text-gray-400">下班时间 (24小时制)</label>
               <input type="time" id="mOut" class="border p-2 rounded-lg w-full">
             </div>
             <div class="flex items-end">
@@ -477,7 +476,7 @@ app.get('/employee', (req, res) => {
           </div>
         </div>
 
-        <!-- 历史记录表格（修复修改按键，并添加删除按键） -->
+        <!-- 历史记录表格 -->
         <div class="bg-white p-6 rounded-xl shadow-sm">
           <h3 class="text-lg font-bold mb-4">打卡历史记录</h3>
           <table class="w-full text-left border-collapse">
@@ -503,8 +502,8 @@ app.get('/employee', (req, res) => {
         let currentUser = null;
         let targetUserId = '';
 
-        // 将 ISO 时间转换成 input[type=time] 识别的 HH:mm 格式
-        function formatToHHMM(dateIsoStr) {
+        // ✨ 强制转换为 24 小时制格式 HH:mm
+        function formatTo24HourTime(dateIsoStr) {
           if (!dateIsoStr) return '';
           const d = new Date(dateIsoStr);
           if (isNaN(d.getTime())) return '';
@@ -543,7 +542,8 @@ app.get('/employee', (req, res) => {
             } else if (data.todayRecord.clockIn && !data.todayRecord.clockOut) {
               btn.innerText = "下班打卡 (OUT)";
               btn.className = "w-full h-24 text-xl font-bold rounded-xl text-white bg-red-500 hover:bg-red-600 transition";
-              status.innerText = \`已签到：\${new Date(data.todayRecord.clockIn).toLocaleTimeString()}\`;
+              // 打卡提示也使用 24 小时制
+              status.innerText = \`已签到：\${formatTo24HourTime(data.todayRecord.clockIn)}\`;
             } else {
               btn.innerText = "今日打卡完成";
               btn.disabled = true;
@@ -554,19 +554,19 @@ app.get('/employee', (req, res) => {
 
           const table = document.getElementById('historyTable');
           table.innerHTML = data.history.map(row => {
-            const inTimeStr = formatToHHMM(row.clockIn);
-            const outTimeStr = formatToHHMM(row.clockOut);
+            const inTime24 = formatTo24HourTime(row.clockIn);
+            const outTime24 = formatTo24HourTime(row.clockOut);
             
             return \`
               <tr>
                 <td class="p-3 font-medium">\${row.date}</td>
-                <td class="p-3">\${row.clockIn ? new Date(row.clockIn).toLocaleTimeString() : '-'}</td>
-                <td class="p-3">\${row.clockOut ? new Date(row.clockOut).toLocaleTimeString() : '-'}</td>
+                <td class="p-3">\${inTime24 || '-'}</td>
+                <td class="p-3">\${outTime24 || '-'}</td>
                 <td class="p-3 font-semibold text-blue-600">\${row.workHours} 小时</td>
                 <td class="p-3 font-semibold text-orange-600">\${row.otHours} 小时</td>
                 <td class="p-3"><span class="px-2 py-1 text-xs rounded \${row.isManual ? 'bg-purple-100 text-purple-700' : 'bg-gray-100 text-gray-600'}">\${row.isManual ? '手动补录/修改' : '实时打卡'}</span></td>
                 <td class="p-3 no-print space-x-2">
-                  <button onclick="editRow('\${row.date}', '\${inTimeStr}', '\${outTimeStr}')" class="text-indigo-600 hover:text-indigo-900 font-semibold text-xs border border-indigo-200 px-2 py-1 rounded hover:bg-indigo-50 transition">✏️ 修改</button>
+                  <button onclick="editRow('\${row.date}', '\${inTime24}', '\${outTime24}')" class="text-indigo-600 hover:text-indigo-900 font-semibold text-xs border border-indigo-200 px-2 py-1 rounded hover:bg-indigo-50 transition">✏️ 修改</button>
                   <button onclick="deleteRow('\${row.date}')" class="text-red-600 hover:text-red-900 font-semibold text-xs border border-red-200 px-2 py-1 rounded hover:bg-red-50 transition">🗑️ 删除</button>
                 </td>
               </tr>
@@ -574,7 +574,6 @@ app.get('/employee', (req, res) => {
           }).join('');
         }
 
-        // 修改按键点击响应：精准填入表单并平滑滚动
         function editRow(date, clockIn, clockOut) {
           document.getElementById('mDate').value = date;
           document.getElementById('mIn').value = clockIn;
@@ -584,7 +583,6 @@ app.get('/employee', (req, res) => {
           targetArea.scrollIntoView({ behavior: 'smooth' });
         }
 
-        // 删除按键响应
         async function deleteRow(date) {
           if (!confirm(\`确定要删除 \${date} 的打卡记录吗？\`)) return;
 
