@@ -424,6 +424,9 @@ app.get('/employee', (req, res) => {
       <meta charset="UTF-8">
       <title>员工打卡页面</title>
       <script src="https://cdn.tailwindcss.com"></script>
+      <!-- 💡 引入 24 小时制独立选择框 (Flatpickr) -->
+      <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/flatpickr/dist/flatpickr.min.css">
+      <script src="https://cdn.jsdelivr.net/npm/flatpickr"></script>
       <style>
         @media print {
           .no-print { display: none !important; }
@@ -467,25 +470,21 @@ app.get('/employee', (req, res) => {
           </div>
         </div>
 
-        <!-- 📝 补录与修改区域 (下拉框直接选择 24 小时制) -->
+        <!-- 📝 补录与修改区域 (纯 24 小时制滚动选择盘，无 AM/PM) -->
         <div id="manualArea" class="bg-white p-6 rounded-xl shadow-sm no-print">
-          <h3 id="formTitle" class="text-lg font-bold mb-4">添加/修改打卡记录 (选择 24 小时制时间)</h3>
+          <h3 id="formTitle" class="text-lg font-bold mb-4">添加/修改打卡记录</h3>
           <div class="grid grid-cols-4 gap-4">
             <div>
               <label class="text-xs text-gray-400">选择日期</label>
-              <input type="date" id="mDate" class="border p-2 rounded-lg w-full bg-white">
+              <input type="text" id="mDate" placeholder="选择日期" class="border p-2 rounded-lg w-full bg-white cursor-pointer">
             </div>
             <div>
-              <label class="text-xs text-gray-400">上班时间</label>
-              <select id="mIn" class="border p-2 rounded-lg w-full bg-white outline-none focus:ring-2 focus:ring-indigo-500">
-                <option value="">-- 选择时间 --</option>
-              </select>
+              <label class="text-xs text-gray-400">上班时间 (24小时制)</label>
+              <input type="text" id="mIn" placeholder="选择上班时间" class="border p-2 rounded-lg w-full bg-white cursor-pointer">
             </div>
             <div>
-              <label class="text-xs text-gray-400">下班时间</label>
-              <select id="mOut" class="border p-2 rounded-lg w-full bg-white outline-none focus:ring-2 focus:ring-indigo-500">
-                <option value="">-- 选择时间 --</option>
-              </select>
+              <label class="text-xs text-gray-400">下班时间 (24小时制)</label>
+              <input type="text" id="mOut" placeholder="选择下班时间" class="border p-2 rounded-lg w-full bg-white cursor-pointer">
             </div>
             <div class="flex items-end">
               <button onclick="addManualRecord()" class="bg-indigo-600 text-white w-full py-2 rounded-lg font-semibold hover:bg-indigo-700 transition">保存记录</button>
@@ -518,22 +517,23 @@ app.get('/employee', (req, res) => {
         const viewUserId = urlParams.get('viewUserId');
         let currentUser = null;
         let targetUserId = '';
+        let pickerIn, pickerOut, pickerDate;
 
-        // 💡 动态生成 24 小时制下拉时间选项（每半小时间隔：00:00, 00:30 ... 23:30）
-        function populateTimeDropdowns() {
-          const inSelect = document.getElementById('mIn');
-          const outSelect = document.getElementById('mOut');
-          
-          let optionsHtml = '<option value="">-- 请选择 --</option>';
-          for (let h = 0; h < 24; h++) {
-            for (let m of ['00', '30']) {
-              const hourStr = String(h).padStart(2, '0');
-              const timeVal = \`\${hourStr}:\${m}\`;
-              optionsHtml += \`<option value="\${timeVal}">\${timeVal}</option>\`;
-            }
-          }
-          inSelect.innerHTML = optionsHtml;
-          outSelect.innerHTML = optionsHtml;
+        // 💡 强行配置面板为 24 小时制 (time_24hr: true)
+        function initTimePickers() {
+          pickerDate = flatpickr("#mDate", { dateFormat: "Y-m-d" });
+          pickerIn = flatpickr("#mIn", {
+            enableTime: true,
+            noCalendar: true,
+            dateFormat: "H:i",
+            time_24hr: true // 🔒 强制开启 24 小时制模式，移除 AM/PM
+          });
+          pickerOut = flatpickr("#mOut", {
+            enableTime: true,
+            noCalendar: true,
+            dateFormat: "H:i",
+            time_24hr: true // 🔒 强制开启 24 小时制模式，移除 AM/PM
+          });
         }
 
         function formatTo24HourTime(dateIsoStr) {
@@ -550,7 +550,7 @@ app.get('/employee', (req, res) => {
         }
 
         async function init() {
-          populateTimeDropdowns(); // 初始化填充时间列表
+          initTimePickers();
           const res = await fetch('/api/me');
           if (!res.ok) return location.href = '/';
           currentUser = await res.json();
@@ -612,9 +612,9 @@ app.get('/employee', (req, res) => {
         }
 
         function editRow(date, clockIn, clockOut) {
-          document.getElementById('mDate').value = date;
-          document.getElementById('mIn').value = clockIn;
-          document.getElementById('mOut').value = clockOut;
+          pickerDate.setDate(date);
+          pickerIn.setDate(clockIn);
+          pickerOut.setDate(clockOut);
           
           const targetArea = document.getElementById('manualArea');
           targetArea.scrollIntoView({ behavior: 'smooth' });
@@ -659,9 +659,9 @@ app.get('/employee', (req, res) => {
           const data = await res.json();
           alert(data.message);
           if (res.ok) {
-            document.getElementById('mDate').value = '';
-            document.getElementById('mIn').value = '';
-            document.getElementById('mOut').value = '';
+            pickerDate.clear();
+            pickerIn.clear();
+            pickerOut.clear();
             loadAttendanceData();
           }
         }
