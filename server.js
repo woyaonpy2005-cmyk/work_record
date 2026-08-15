@@ -238,7 +238,7 @@ app.delete('/api/attendance/delete', async (req, res) => {
 
 // ==================== 3. 前端页面路由 ====================
 
-// 页面 1：登录界面
+// 页面 1：登录界面 (加上显示/隐藏密码小眼睛)
 app.get('/', (req, res) => {
   res.send(`
     <!DOCTYPE html>
@@ -259,12 +259,29 @@ app.get('/', (req, res) => {
           </div>
           <div>
             <label class="block text-sm font-medium text-gray-700">密码</label>
-            <input type="password" id="password" class="mt-1 w-full border rounded-lg p-2 focus:ring-2 focus:ring-blue-500 outline-none">
+            <div class="relative mt-1">
+              <input type="password" id="password" class="w-full border rounded-lg p-2 pr-10 focus:ring-2 focus:ring-blue-500 outline-none">
+              <button type="button" onclick="togglePasswordVisibility('password', 'eyeIcon')" class="absolute inset-y-0 right-0 pr-3 flex items-center text-gray-500 hover:text-gray-700">
+                <span id="eyeIcon">👁️</span>
+              </button>
+            </div>
           </div>
           <button onclick="login()" class="w-full bg-blue-600 text-white py-2 rounded-lg font-semibold hover:bg-blue-700 transition">登录</button>
         </div>
       </div>
       <script>
+        function togglePasswordVisibility(inputId, eyeIconId) {
+          const input = document.getElementById(inputId);
+          const icon = document.getElementById(eyeIconId);
+          if (input.type === 'password') {
+            input.type = 'text';
+            icon.innerText = '🙈';
+          } else {
+            input.type = 'password';
+            icon.innerText = '👁️';
+          }
+        }
+
         async function login() {
           const userId = document.getElementById('userId').value;
           const password = document.getElementById('password').value;
@@ -290,7 +307,7 @@ app.get('/', (req, res) => {
   `);
 });
 
-// 页面 2：Admin 控制台
+// 页面 2：Admin 控制台 (密码输入框均带有小眼睛)
 app.get('/admin', (req, res) => {
   res.send(`
     <!DOCTYPE html>
@@ -312,7 +329,12 @@ app.get('/admin', (req, res) => {
           <div class="grid grid-cols-3 gap-4">
             <input type="text" id="newId" placeholder="员工 ID (例如: emp01)" class="border p-2 rounded-lg outline-none focus:ring-2 focus:ring-green-500">
             <input type="text" id="newName" placeholder="员工姓名" class="border p-2 rounded-lg outline-none focus:ring-2 focus:ring-green-500">
-            <input type="password" id="newPass" placeholder="初始密码" class="border p-2 rounded-lg outline-none focus:ring-2 focus:ring-green-500">
+            <div class="relative">
+              <input type="password" id="newPass" placeholder="初始密码" class="border p-2 pr-10 rounded-lg w-full outline-none focus:ring-2 focus:ring-green-500">
+              <button type="button" onclick="togglePasswordVisibility('newPass', 'eyeNew')" class="absolute inset-y-0 right-0 pr-3 flex items-center text-gray-500 hover:text-gray-700">
+                <span id="eyeNew">👁️</span>
+              </button>
+            </div>
           </div>
           <button onclick="addEmployee()" class="mt-4 bg-green-600 text-white px-6 py-2 rounded-lg font-semibold hover:bg-green-700 transition">添加员工</button>
         </div>
@@ -323,7 +345,12 @@ app.get('/admin', (req, res) => {
             <select id="resetUserId" class="border p-2 rounded-lg outline-none focus:ring-2 focus:ring-orange-500">
               <option value="">-- 选择要重置密码的员工 --</option>
             </select>
-            <input type="password" id="resetNewPass" placeholder="设置新密码" class="border p-2 rounded-lg outline-none focus:ring-2 focus:ring-orange-500">
+            <div class="relative">
+              <input type="password" id="resetNewPass" placeholder="设置新密码" class="border p-2 pr-10 rounded-lg w-full outline-none focus:ring-2 focus:ring-orange-500">
+              <button type="button" onclick="togglePasswordVisibility('resetNewPass', 'eyeReset')" class="absolute inset-y-0 right-0 pr-3 flex items-center text-gray-500 hover:text-gray-700">
+                <span id="eyeReset">👁️</span>
+              </button>
+            </div>
           </div>
           <button onclick="resetPassword()" class="mt-4 bg-orange-500 text-white px-6 py-2 rounded-lg font-semibold hover:bg-orange-600 transition">修改密码</button>
         </div>
@@ -335,6 +362,18 @@ app.get('/admin', (req, res) => {
       </div>
 
       <script>
+        function togglePasswordVisibility(inputId, eyeIconId) {
+          const input = document.getElementById(inputId);
+          const icon = document.getElementById(eyeIconId);
+          if (input.type === 'password') {
+            input.type = 'text';
+            icon.innerText = '🙈';
+          } else {
+            input.type = 'password';
+            icon.innerText = '👁️';
+          }
+        }
+
         async function init() {
           const res = await fetch('/api/me');
           const user = await res.json();
@@ -424,7 +463,6 @@ app.get('/employee', (req, res) => {
       <meta charset="UTF-8">
       <title>员工打卡页面</title>
       <script src="https://cdn.tailwindcss.com"></script>
-      <!-- 💡 引入 24 小时制独立选择框 (Flatpickr) -->
       <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/flatpickr/dist/flatpickr.min.css">
       <script src="https://cdn.jsdelivr.net/npm/flatpickr"></script>
       <style>
@@ -470,7 +508,7 @@ app.get('/employee', (req, res) => {
           </div>
         </div>
 
-        <!-- 📝 补录与修改区域 (纯 24 小时制滚动选择盘，无 AM/PM) -->
+        <!-- 📝 补录与修改区域 -->
         <div id="manualArea" class="bg-white p-6 rounded-xl shadow-sm no-print">
           <h3 id="formTitle" class="text-lg font-bold mb-4">添加/修改打卡记录</h3>
           <div class="grid grid-cols-4 gap-4">
@@ -519,20 +557,19 @@ app.get('/employee', (req, res) => {
         let targetUserId = '';
         let pickerIn, pickerOut, pickerDate;
 
-        // 💡 强行配置面板为 24 小时制 (time_24hr: true)
         function initTimePickers() {
           pickerDate = flatpickr("#mDate", { dateFormat: "Y-m-d" });
           pickerIn = flatpickr("#mIn", {
             enableTime: true,
             noCalendar: true,
             dateFormat: "H:i",
-            time_24hr: true // 🔒 强制开启 24 小时制模式，移除 AM/PM
+            time_24hr: true
           });
           pickerOut = flatpickr("#mOut", {
             enableTime: true,
             noCalendar: true,
             dateFormat: "H:i",
-            time_24hr: true // 🔒 强制开启 24 小时制模式，移除 AM/PM
+            time_24hr: true
           });
         }
 
