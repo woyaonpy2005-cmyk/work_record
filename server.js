@@ -31,28 +31,29 @@ const attendanceSchema = new mongoose.Schema({
 });
 const Attendance = mongoose.model('Attendance', attendanceSchema);
 
-// 连接 MongoDB 并自动强制创建/更新 Admin 账号
-mongoose.connect('mongodb://127.0.0.1:27017/attendance_db')
+// ==================== MongoDB Atlas 连接配置 ====================
+// 💡 请将下面的 `<替换为你的Atlas密码>` 换成 woyaonpy2005_db_user 的真实密码
+// 💡 如果你的 Cluster 地址不是 cluster0.xxxx，请使用 Atlas 后台 Connect -> Drivers 提供的 URI
+const MONGODB_URI = 'mongodb+srv://woyaonpy2005_db_user:<Lim0831.>@cluster0.mongodb.net/attendance_db?retryWrites=true&w=majority';
+
+mongoose.connect(MONGODB_URI)
   .then(async () => {
-    console.log('✅ 成功连接至 MongoDB 数据库');
+    console.log('✅ 成功连接至 MongoDB Atlas 数据库');
     
-    // 生成加密密码
-    const hashedPassword = await bcrypt.hash('123456789', 10);
-    
-    // 使用 findOneAndUpdate + upsert 强制自动写入或覆盖创建 admin123 账号
-    await User.findOneAndUpdate(
-      { userId: 'admin123' },
-      {
+    // 初始化 Admin 账号 (ID: admin123 / Password: 123456789)
+    const adminExists = await User.findOne({ userId: 'admin123' });
+    if (!adminExists) {
+      const hashedPassword = await bcrypt.hash('123456789', 10);
+      await User.create({
         userId: 'admin123',
         password: hashedPassword,
         name: '系统管理员',
         role: 'admin'
-      },
-      { upsert: true, new: true }
-    );
-    console.log('👑 默认Admin已在MongoDB中自动写入/更新完成: admin123 / 123456789');
+      });
+      console.log('👑 默认Admin初始化完成: admin123 / 123456789');
+    }
   })
-  .catch(err => console.error('❌ MongoDB 连接失败，请确认本地 MongoDB 服务是否已启动:', err));
+  .catch(err => console.error('❌ MongoDB Atlas 连接失败:', err));
 
 // 辅助函数
 const getTodayStr = () => new Date().toISOString().split('T')[0];
@@ -71,22 +72,17 @@ const calculateHours = (inTime, outTime) => {
 
 // ==================== 2. API 路由 ====================
 
-// 登录 API (增加了 try...catch 避免接口卡住住)
+// 登录 API
 app.post('/api/login', async (req, res) => {
-  try {
-    const { userId, password } = req.body;
-    const user = await User.findOne({ userId });
-    if (!user) return res.status(400).json({ message: '账号不存在' });
+  const { userId, password } = req.body;
+  const user = await User.findOne({ userId });
+  if (!user) return res.status(400).json({ message: '账号不存在' });
 
-    const isMatch = await bcrypt.compare(password, user.password);
-    if (!isMatch) return res.status(400).json({ message: '密码错误' });
+  const isMatch = await bcrypt.compare(password, user.password);
+  if (!isMatch) return res.status(400).json({ message: '密码错误' });
 
-    req.session.user = { userId: user.userId, role: user.role, name: user.name };
-    res.json({ role: user.role, userId: user.userId });
-  } catch (err) {
-    console.error('登录异常:', err);
-    res.status(500).json({ message: '服务器内部错误或数据库无法连接' });
-  }
+  req.session.user = { userId: user.userId, role: user.role, name: user.name };
+  res.json({ role: user.role, userId: user.userId });
 });
 
 // 获取当前登录人
@@ -194,7 +190,7 @@ app.post('/api/attendance/manual', async (req, res) => {
   res.json({ message: '打卡记录添加/更新成功' });
 });
 
-// ==================== 3. 前端页面路由 ====================
+// ==================== 3. 前端页面路由（渲染 HTML） ====================
 
 // 页面 1：登录界面
 app.get('/', (req, res) => {
@@ -228,22 +224,17 @@ app.get('/', (req, res) => {
           const password = document.getElementById('password').value;
           const errorMsg = document.getElementById('errorMsg');
           errorMsg.classList.add('hidden');
-          try {
-            const res = await fetch('/api/login', {
-              method: 'POST',
-              headers: { 'Content-Type': 'application/json' },
-              body: JSON.stringify({ userId, password })
-            });
-            const data = await res.json();
-            if (res.ok) {
-              if (data.role === 'admin') location.href = '/admin';
-              else location.href = '/employee';
-            } else {
-              errorMsg.innerText = data.message || '登录失败';
-              errorMsg.classList.remove('hidden');
-            }
-          } catch (err) {
-            errorMsg.innerText = '网络请求失败，请检查服务器连接';
+          const res = await fetch('/api/login', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ userId, password })
+          });
+          const data = await res.json();
+          if (res.ok) {
+            if (data.role === 'admin') location.href = '/admin';
+            else location.href = '/employee';
+          } else {
+            errorMsg.innerText = data.message;
             errorMsg.classList.remove('hidden');
           }
         }
@@ -333,7 +324,7 @@ app.get('/admin', (req, res) => {
   `);
 });
 
-// 页面 3：员工打卡/查看打卡页
+// 页面 3：员工打卡页面
 app.get('/employee', (req, res) => {
   res.send(`
     <!DOCTYPE html>
@@ -456,7 +447,7 @@ app.get('/employee', (req, res) => {
               btn.innerText = "今日打卡完成";
               btn.disabled = true;
               btn.className = "w-full h-24 text-xl font-bold rounded-xl text-white bg-gray-400 cursor-not-allowed";
-              status.innerText = "明日12点后自动刷新";
+              status.innerText = "跨天后自动刷新";
             }
           }
           const table = document.getElementById('historyTable');
@@ -502,4 +493,4 @@ app.get('/employee', (req, res) => {
 });
 
 const PORT = 3000;
-app.listen(PORT, () => console.log(`🚀 服务已启动在: http://localhost:${PORT}`));
+app.listen(PORT, () => console.log(`🚀 服务已启动: http://localhost:${PORT}`));
