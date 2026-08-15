@@ -4,6 +4,11 @@ const session = require('express-session');
 const bcrypt = require('bcryptjs');
 
 const app = express();
+const PORT = process.env.PORT || 3000;
+
+// 💡 提取自你的 project 连接字符串 (使用真实的密码与正确的 Cluster0 域名)
+const MONGO_URI = process.env.MONGO_URI || "mongodb+srv://woyaonpy2005_db_user:Lim050831.@cluster0.ztvp8bb.mongodb.net/attendance_db?appName=Cluster0";
+
 app.use(express.json());
 app.use(session({
   secret: 'attendance_secret_key_123',
@@ -31,16 +36,12 @@ const attendanceSchema = new mongoose.Schema({
 });
 const Attendance = mongoose.model('Attendance', attendanceSchema);
 
-// ==================== MongoDB Atlas 连接配置 ====================
-// 💡 请将下面的 `<替换为你的Atlas密码>` 换成 woyaonpy2005_db_user 的真实密码
-// 💡 如果你的 Cluster 地址不是 cluster0.xxxx，请使用 Atlas 后台 Connect -> Drivers 提供的 URI
-const MONGO_URI = process.env.MONGO_URI || "mongodb+srv://woyaonpy2005_db_user:Lim050831.@cluster0.ztvp8bb.mongodb.net/ticket_system?appName=Cluster0";
-
-mongoose.connect(MONGODB_URI)
+// 连接 MongoDB Atlas 云数据库并初始化 Admin 账号
+mongoose.connect(MONGO_URI)
   .then(async () => {
-    console.log('✅ 成功连接至 MongoDB Atlas 数据库');
+    console.log('✅ 成功连接至 MongoDB Atlas 云数据库');
     
-    // 初始化 Admin 账号 (ID: admin123 / Password: 123456789)
+    // 初始化默认 Admin 账号 (admin123 / 123456789)
     const adminExists = await User.findOne({ userId: 'admin123' });
     if (!adminExists) {
       const hashedPassword = await bcrypt.hash('123456789', 10);
@@ -190,7 +191,7 @@ app.post('/api/attendance/manual', async (req, res) => {
   res.json({ message: '打卡记录添加/更新成功' });
 });
 
-// ==================== 3. 前端页面路由（渲染 HTML） ====================
+// ==================== 3. 前端页面路由（直接返回HTML） ====================
 
 // 页面 1：登录界面
 app.get('/', (req, res) => {
@@ -324,7 +325,7 @@ app.get('/admin', (req, res) => {
   `);
 });
 
-// 页面 3：员工打卡页面
+// 页面 3：员工打卡/查看打卡页
 app.get('/employee', (req, res) => {
   res.send(`
     <!DOCTYPE html>
@@ -447,7 +448,7 @@ app.get('/employee', (req, res) => {
               btn.innerText = "今日打卡完成";
               btn.disabled = true;
               btn.className = "w-full h-24 text-xl font-bold rounded-xl text-white bg-gray-400 cursor-not-allowed";
-              status.innerText = "跨天后自动刷新";
+              status.innerText = "明日跨天后可再次打卡";
             }
           }
           const table = document.getElementById('historyTable');
@@ -492,5 +493,6 @@ app.get('/employee', (req, res) => {
   `);
 });
 
-const PORT = 3000;
-app.listen(PORT, () => console.log(`🚀 服务已启动: http://localhost:${PORT}`));
+app.listen(PORT, () => {
+  console.log(`🚀 服务已启动，监听端口: ${PORT}`);
+});
