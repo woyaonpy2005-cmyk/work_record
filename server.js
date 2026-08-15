@@ -34,7 +34,7 @@ const Attendance = mongoose.model('Attendance', attendanceSchema);
 // ==================== MongoDB Atlas 连接配置 ====================
 // 💡 请将下面的 `<替换为你的Atlas密码>` 换成 woyaonpy2005_db_user 的真实密码
 // 💡 如果你的 Cluster 地址不是 cluster0.xxxx，请使用 Atlas 后台 Connect -> Drivers 提供的 URI
-const MONGODB_URI = 'mongodb+srv://woyaonpy2005_db_user:<Lim0831.>@cluster0.mongodb.net/attendance_db?retryWrites=true&w=majority';
+const MONGO_URI = process.env.MONGO_URI || "mongodb+srv://woyaonpy2005_db_user:Lim050831.@cluster0.ztvp8bb.mongodb.net/ticket_system?appName=Cluster0";
 
 mongoose.connect(MONGODB_URI)
   .then(async () => {
