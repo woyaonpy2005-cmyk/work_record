@@ -8,7 +8,7 @@ const PORT = process.env.PORT || 3000;
 
 // 💡 配置所在的时区偏移量（如马来西亚/中国时间为 +08:00）
 const TIMEZONE_OFFSET = '+08:00'; 
-const TIMEZONE_NAME = 'Asia/Kuala_Lumpur'; // 可根据实际需求调整，如 'Asia/Shanghai'
+const TIMEZONE_NAME = 'Asia/Kuala_Lumpur';
 
 // 💡 数据库连接字符串
 const MONGO_URI = process.env.MONGO_URI || "mongodb+srv://woyaonpy2005_db_user:Lim050831.@cluster0.ztvp8bb.mongodb.net/attendance_db?appName=Cluster0";
@@ -62,7 +62,7 @@ mongoose.connect(MONGO_URI)
 // 辅助函数：按本地时区获取 YYYY-MM-DD
 const getTodayStr = () => {
   const d = new Date();
-  return d.toLocaleDateString('en-CA', { timeZone: TIMEZONE_NAME }); // 输出 YYYY-MM-DD
+  return d.toLocaleDateString('en-CA', { timeZone: TIMEZONE_NAME });
 };
 
 const calculateHours = (inTime, outTime) => {
@@ -191,17 +191,26 @@ app.post('/api/attendance/toggle', async (req, res) => {
   }
 });
 
-// 🔧 手动添加/修改记录 API（带 24 小时制及时区对齐处理）
+// 🔧 手动添加/修改记录 API（强化格式校验）
 app.post('/api/attendance/manual', async (req, res) => {
   const user = req.session.user;
   if (!user) return res.status(401).json({ message: '未登录' });
 
-  const { date, clockIn, clockOut, targetUserId } = req.body;
+  let { date, clockIn, clockOut, targetUserId } = req.body;
   if (!date || !clockIn || !clockOut) return res.status(400).json({ message: '请完整填写日期与时间' });
+
+  // 格式化验证 HH:mm 格式（例如支持输入 9:00 -> 自动补齐 09:00）
+  const timeRegex = /^([0-1]?[0-9]|2[0-3]):[0-5][0-9]$/;
+  if (!timeRegex.test(clockIn) || !timeRegex.test(clockOut)) {
+    return res.status(400).json({ message: '时间格式不正确！请输入形如 09:00 或 18:00 的24小时制时间' });
+  }
+
+  // 如果输入的是 9:00 补全为 09:00
+  if (clockIn.length === 4) clockIn = '0' + clockIn;
+  if (clockOut.length === 4) clockOut = '0' + clockOut;
 
   const updateUserId = (user.role === 'admin' && targetUserId) ? targetUserId : user.userId;
 
-  // 💡 拼接标准的 ISO 带时区时间字符串，避免 UTC 偏移影响
   const inDateTime = new Date(`${date}T${clockIn}:00${TIMEZONE_OFFSET}`);
   const outDateTime = new Date(`${date}T${clockOut}:00${TIMEZONE_OFFSET}`);
 
@@ -468,21 +477,21 @@ app.get('/employee', (req, res) => {
           </div>
         </div>
 
-        <!-- 📝 补录与修改区域 -->
+        <!-- 📝 补录与修改区域 (已改为纯文本框，不再有 AM/PM 弹出选择) -->
         <div id="manualArea" class="bg-white p-6 rounded-xl shadow-sm no-print">
-          <h3 id="formTitle" class="text-lg font-bold mb-4">添加/修改打卡记录 (24小时制，例如 10:00 - 18:00)</h3>
+          <h3 id="formTitle" class="text-lg font-bold mb-4">添加/修改打卡记录</h3>
           <div class="grid grid-cols-4 gap-4">
             <div>
               <label class="text-xs text-gray-400">选择日期</label>
               <input type="date" id="mDate" class="border p-2 rounded-lg w-full">
             </div>
             <div>
-              <label class="text-xs text-gray-400">上班时间 (例如 10:00)</label>
-              <input type="time" id="mIn" class="border p-2 rounded-lg w-full">
+              <label class="text-xs text-gray-400">上班时间 (例: 10:00)</label>
+              <input type="text" id="mIn" placeholder="10:00" class="border p-2 rounded-lg w-full">
             </div>
             <div>
-              <label class="text-xs text-gray-400">下班时间 (例如 18:00)</label>
-              <input type="time" id="mOut" class="border p-2 rounded-lg w-full">
+              <label class="text-xs text-gray-400">下班时间 (例: 18:00)</label>
+              <input type="text" id="mOut" placeholder="18:00" class="border p-2 rounded-lg w-full">
             </div>
             <div class="flex items-end">
               <button onclick="addManualRecord()" class="bg-indigo-600 text-white w-full py-2 rounded-lg font-semibold hover:bg-indigo-700 transition">保存记录</button>
@@ -516,7 +525,6 @@ app.get('/employee', (req, res) => {
         let currentUser = null;
         let targetUserId = '';
 
-        // 🔧 强制提取标准的 24 小时制 HH:mm 时间格式
         function formatTo24HourTime(dateIsoStr) {
           if (!dateIsoStr) return '';
           const d = new Date(dateIsoStr);
@@ -526,7 +534,7 @@ app.get('/employee', (req, res) => {
             hour12: false,
             hour: '2-digit',
             minute: '2-digit',
-            timeZone: 'Asia/Kuala_Lumpur' // 保持与全局配置一致
+            timeZone: 'Asia/Kuala_Lumpur'
           });
         }
 
