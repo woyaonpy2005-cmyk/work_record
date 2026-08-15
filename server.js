@@ -6,7 +6,7 @@ const bcrypt = require('bcryptjs');
 const app = express();
 const PORT = process.env.PORT || 3000;
 
-// 💡 提取自你的 project 连接字符串 (使用真实的密码与正确的 Cluster0 域名)
+// 💡 提取自你的 project 连接字符串 (使用真实的密码与正确的 Cluster0 域名)[cite: 3]
 const MONGO_URI = process.env.MONGO_URI || "mongodb+srv://woyaonpy2005_db_user:Lim050831.@cluster0.ztvp8bb.mongodb.net/attendance_db?appName=Cluster0";
 
 app.use(express.json());
@@ -36,7 +36,7 @@ const attendanceSchema = new mongoose.Schema({
 });
 const Attendance = mongoose.model('Attendance', attendanceSchema);
 
-// 连接 MongoDB Atlas 云数据库并初始化 Admin 账号
+// 连接 MongoDB Atlas 云数据库并初始化 Admin 账号[cite: 3]
 mongoose.connect(MONGO_URI)
   .then(async () => {
     console.log('✅ 成功连接至 MongoDB Atlas 云数据库');
@@ -121,6 +121,21 @@ app.get('/api/admin/employees', async (req, res) => {
   res.json(employees);
 });
 
+// ✨ Admin API：修改员工密码（功能 2）
+app.post('/api/admin/reset-password', async (req, res) => {
+  if (!req.session.user || req.session.user.role !== 'admin') {
+    return res.status(403).json({ message: '无权限操作' });
+  }
+  const { targetUserId, newPassword } = req.body;
+  if (!targetUserId || !newPassword) return res.status(400).json({ message: '请填写完整参数' });
+
+  const hashedPassword = await bcrypt.hash(newPassword, 10);
+  const updatedUser = await User.findOneAndUpdate({ userId: targetUserId }, { password: hashedPassword });
+  if (!updatedUser) return res.status(404).json({ message: '找不到该员工' });
+
+  res.json({ message: `员工 ${targetUserId} 的密码已成功重置！` });
+});
+
 // 打卡数据 API：获取指定员工考勤数据
 app.get('/api/attendance/:targetUserId', async (req, res) => {
   if (!req.session.user) return res.status(401).json({ message: '未登录' });
@@ -169,7 +184,7 @@ app.post('/api/attendance/toggle', async (req, res) => {
   }
 });
 
-// 手动添加记录 API
+// 手动添加/修改记录 API（功能 1：支持通过日期修改旧记录）
 app.post('/api/attendance/manual', async (req, res) => {
   const user = req.session.user;
   if (!user || user.role !== 'employee') return res.status(403).json({ message: '仅员工能进行此操作' });
@@ -188,7 +203,7 @@ app.post('/api/attendance/manual', async (req, res) => {
     { upsert: true, new: true }
   );
 
-  res.json({ message: '打卡记录添加/更新成功' });
+  res.json({ message: '打卡记录已更新/保存成功！' });
 });
 
 // ==================== 3. 前端页面路由（直接返回HTML） ====================
@@ -245,7 +260,7 @@ app.get('/', (req, res) => {
   `);
 });
 
-// 页面 2：Admin 控制台
+// 页面 2：Admin 控制台（添加了密码修改功能）
 app.get('/admin', (req, res) => {
   res.send(`
     <!DOCTYPE html>
@@ -256,25 +271,42 @@ app.get('/admin', (req, res) => {
       <script src="https://cdn.tailwindcss.com"></script>
     </head>
     <body class="bg-gray-50 min-h-screen p-8">
-      <div class="max-w-4xl mx-auto">
+      <div class="max-w-4xl mx-auto space-y-8">
         <div class="flex justify-between items-center mb-8">
           <h1 class="text-3xl font-bold text-gray-800">管理员控制台 (Admin)</h1>
           <button onclick="logout()" class="bg-red-500 text-white px-4 py-2 rounded-lg">退出登录</button>
         </div>
-        <div class="bg-white p-6 rounded-xl shadow-sm mb-8">
+
+        <!-- 1. 添加新员工 -->
+        <div class="bg-white p-6 rounded-xl shadow-sm">
           <h2 class="text-xl font-bold mb-4">添加新员工</h2>
           <div class="grid grid-cols-3 gap-4">
-            <input type="text" id="newId" placeholder="员工 ID (例如: emp01)" class="border p-2 rounded-lg">
-            <input type="text" id="newName" placeholder="员工姓名" class="border p-2 rounded-lg">
-            <input type="password" id="newPass" placeholder="初始密码" class="border p-2 rounded-lg">
+            <input type="text" id="newId" placeholder="员工 ID (例如: emp01)" class="border p-2 rounded-lg outline-none focus:ring-2 focus:ring-green-500">
+            <input type="text" id="newName" placeholder="员工姓名" class="border p-2 rounded-lg outline-none focus:ring-2 focus:ring-green-500">
+            <input type="password" id="newPass" placeholder="初始密码" class="border p-2 rounded-lg outline-none focus:ring-2 focus:ring-green-500">
           </div>
-          <button onclick="addEmployee()" class="mt-4 bg-green-600 text-white px-6 py-2 rounded-lg font-semibold">添加员工</button>
+          <button onclick="addEmployee()" class="mt-4 bg-green-600 text-white px-6 py-2 rounded-lg font-semibold hover:bg-green-700 transition">添加员工</button>
         </div>
+
+        <!-- 🔑 2. 重置员工密码功能 -->
+        <div class="bg-white p-6 rounded-xl shadow-sm">
+          <h2 class="text-xl font-bold mb-4">🔑 重置员工密码</h2>
+          <div class="grid grid-cols-2 gap-4">
+            <select id="resetUserId" class="border p-2 rounded-lg outline-none focus:ring-2 focus:ring-orange-500">
+              <option value="">-- 选择要重置密码的员工 --</option>
+            </select>
+            <input type="password" id="resetNewPass" placeholder="设置新密码" class="border p-2 rounded-lg outline-none focus:ring-2 focus:ring-orange-500">
+          </div>
+          <button onclick="resetPassword()" class="mt-4 bg-orange-500 text-white px-6 py-2 rounded-lg font-semibold hover:bg-orange-600 transition">修改密码</button>
+        </div>
+
+        <!-- 3. 员工列表 -->
         <div class="bg-white p-6 rounded-xl shadow-sm">
           <h2 class="text-xl font-bold mb-4">员工列表 (点击员工查看其打卡页)</h2>
           <div id="employeeList" class="grid grid-cols-2 gap-4"></div>
         </div>
       </div>
+
       <script>
         async function init() {
           const res = await fetch('/api/me');
@@ -282,9 +314,12 @@ app.get('/admin', (req, res) => {
           if (!res.ok || user.role !== 'admin') location.href = '/';
           loadEmployees();
         }
+
         async function loadEmployees() {
           const res = await fetch('/api/admin/employees');
           const list = await res.json();
+          
+          // 渲染员工卡片列表
           const container = document.getElementById('employeeList');
           container.innerHTML = list.map(emp => \`
             <div onclick="viewEmployee('\${emp.userId}')" class="p-4 border rounded-xl cursor-pointer hover:border-blue-500 hover:shadow-md transition bg-gray-50">
@@ -292,7 +327,13 @@ app.get('/admin', (req, res) => {
               <div class="text-gray-600">\${emp.name}</div>
             </div>
           \`).join('');
+
+          // 填充重置密码下拉框列表
+          const select = document.getElementById('resetUserId');
+          select.innerHTML = '<option value="">-- 选择要重置密码的员工 --</option>' + 
+            list.map(emp => \`<option value="\${emp.userId}">\${emp.userId} (\${emp.name})</option>\`).join('');
         }
+
         async function addEmployee() {
           const userId = document.getElementById('newId').value;
           const name = document.getElementById('newName').value;
@@ -311,13 +352,37 @@ app.get('/admin', (req, res) => {
             loadEmployees();
           }
         }
+
+        async function resetPassword() {
+          const targetUserId = document.getElementById('resetUserId').value;
+          const newPassword = document.getElementById('resetNewPass').value;
+
+          if (!targetUserId || !newPassword) {
+            return alert('请选择员工并输入新密码！');
+          }
+
+          const res = await fetch('/api/admin/reset-password', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ targetUserId, newPassword })
+          });
+          const data = await res.json();
+          alert(data.message);
+          if (res.ok) {
+            document.getElementById('resetUserId').value = '';
+            document.getElementById('resetNewPass').value = '';
+          }
+        }
+
         function viewEmployee(userId) {
           location.href = \`/employee?viewUserId=\${userId}\`;
         }
+
         async function logout() {
           await fetch('/api/logout', { method: 'POST' });
           location.href = '/';
         }
+
         init();
       </script>
     </body>
@@ -325,7 +390,7 @@ app.get('/admin', (req, res) => {
   `);
 });
 
-// 页面 3：员工打卡/查看打卡页
+// 页面 3：员工打卡/修改打卡页
 app.get('/employee', (req, res) => {
   res.send(`
     <!DOCTYPE html>
@@ -354,6 +419,7 @@ app.get('/employee', (req, res) => {
             <button id="logoutBtn" onclick="logout()" class="bg-red-500 text-white px-4 py-2 rounded-lg">退出登录</button>
           </div>
         </div>
+
         <div class="grid grid-cols-3 gap-6">
           <div class="bg-white p-6 rounded-xl shadow-sm col-span-2">
             <h3 class="text-sm font-semibold text-gray-400 mb-2">累计考勤统计</h3>
@@ -375,10 +441,15 @@ app.get('/employee', (req, res) => {
             <p id="clockStatus" class="text-xs text-gray-400 mt-2 text-center">点击记录当前时刻</p>
           </div>
         </div>
+
+        <!-- 📝 补录与修改区域 -->
         <div id="manualArea" class="bg-white p-6 rounded-xl shadow-sm no-print">
-          <h3 class="text-lg font-bold mb-4">添加/补录打卡记录</h3>
+          <h3 id="formTitle" class="text-lg font-bold mb-4">添加/修改打卡记录</h3>
           <div class="grid grid-cols-4 gap-4">
-            <input type="date" id="mDate" class="border p-2 rounded-lg">
+            <div>
+              <label class="text-xs text-gray-400">选择日期</label>
+              <input type="date" id="mDate" class="border p-2 rounded-lg w-full">
+            </div>
             <div>
               <label class="text-xs text-gray-400">上班时间</label>
               <input type="time" id="mIn" class="border p-2 rounded-lg w-full">
@@ -388,10 +459,12 @@ app.get('/employee', (req, res) => {
               <input type="time" id="mOut" class="border p-2 rounded-lg w-full">
             </div>
             <div class="flex items-end">
-              <button onclick="addManualRecord()" class="bg-indigo-600 text-white w-full py-2 rounded-lg font-semibold">保存记录</button>
+              <button onclick="addManualRecord()" class="bg-indigo-600 text-white w-full py-2 rounded-lg font-semibold hover:bg-indigo-700 transition">保存记录</button>
             </div>
           </div>
         </div>
+
+        <!-- 历史记录表格（加入了修改按钮） -->
         <div class="bg-white p-6 rounded-xl shadow-sm">
           <h3 class="text-lg font-bold mb-4">打卡历史记录</h3>
           <table class="w-full text-left border-collapse">
@@ -403,17 +476,20 @@ app.get('/employee', (req, res) => {
                 <th class="p-3">实际工时</th>
                 <th class="p-3">OT 时长</th>
                 <th class="p-3">类型</th>
+                <th class="p-3 no-print">操作</th>
               </tr>
             </thead>
             <tbody id="historyTable" class="divide-y text-sm"></tbody>
           </table>
         </div>
       </div>
+
       <script>
         const urlParams = new URLSearchParams(window.location.search);
         const viewUserId = urlParams.get('viewUserId');
         let currentUser = null;
         let targetUserId = '';
+
         async function init() {
           const res = await fetch('/api/me');
           if (!res.ok) return location.href = '/';
@@ -428,11 +504,13 @@ app.get('/employee', (req, res) => {
           document.getElementById('dispUserId').innerText = targetUserId;
           loadAttendanceData();
         }
+
         async function loadAttendanceData() {
           const res = await fetch(\`/api/attendance/\${targetUserId}\`);
           const data = await res.json();
           document.getElementById('totalWork').innerText = data.totalWorkHours;
           document.getElementById('totalOt').innerText = data.totalOtHours;
+
           if (currentUser.role === 'employee') {
             const btn = document.getElementById('clockBtn');
             const status = document.getElementById('clockStatus');
@@ -451,24 +529,43 @@ app.get('/employee', (req, res) => {
               status.innerText = "明日跨天后可再次打卡";
             }
           }
+
           const table = document.getElementById('historyTable');
-          table.innerHTML = data.history.map(row => \`
-            <tr>
-              <td class="p-3 font-medium">\${row.date}</td>
-              <td class="p-3">\${row.clockIn ? new Date(row.clockIn).toLocaleTimeString() : '-'}</td>
-              <td class="p-3">\${row.clockOut ? new Date(row.clockOut).toLocaleTimeString() : '-'}</td>
-              <td class="p-3 font-semibold text-blue-600">\${row.workHours} 小时</td>
-              <td class="p-3 font-semibold text-orange-600">\${row.otHours} 小时</td>
-              <td class="p-3"><span class="px-2 py-1 text-xs rounded \${row.isManual ? 'bg-purple-100 text-purple-700' : 'bg-gray-100 text-gray-600'}">\${row.isManual ? '手动补录' : '实时打卡'}</span></td>
-            </tr>
-          \`).join('');
+          table.innerHTML = data.history.map(row => {
+            const inTimeStr = row.clockIn ? new Date(row.clockIn).toTimeString().substring(0, 5) : '';
+            const outTimeStr = row.clockOut ? new Date(row.clockOut).toTimeString().substring(0, 5) : '';
+            
+            return \`
+              <tr>
+                <td class="p-3 font-medium">\${row.date}</td>
+                <td class="p-3">\${row.clockIn ? new Date(row.clockIn).toLocaleTimeString() : '-'}</td>
+                <td class="p-3">\${row.clockOut ? new Date(row.clockOut).toLocaleTimeString() : '-'}</td>
+                <td class="p-3 font-semibold text-blue-600">\${row.workHours} 小时</td>
+                <td class="p-3 font-semibold text-orange-600">\${row.otHours} 小时</td>
+                <td class="p-3"><span class="px-2 py-1 text-xs rounded \${row.isManual ? 'bg-purple-100 text-purple-700' : 'bg-gray-100 text-gray-600'}">\${row.isManual ? '手动补录/修改' : '实时打卡'}</span></td>
+                <td class="p-3 no-print">
+                  \${currentUser.role === 'employee' ? \`<button onclick="editRow('\${row.date}', '\${inTimeStr}', '\${outTimeStr}')" class="text-indigo-600 hover:text-indigo-900 font-semibold text-xs border border-indigo-200 px-2 py-1 rounded hover:bg-indigo-50 transition">✏️ 修改</button>\` : '-'}
+                </td>
+              </tr>
+            \`;
+          }).join('');
         }
+
+        // ✨ 修改按键回填数据
+        function editRow(date, clockIn, clockOut) {
+          document.getElementById('mDate').value = date;
+          document.getElementById('mIn').value = clockIn;
+          document.getElementById('mOut').value = clockOut;
+          window.scrollTo({ top: document.getElementById('manualArea').offsetTop - 20, behavior: 'smooth' });
+        }
+
         async function toggleClock() {
           const res = await fetch('/api/attendance/toggle', { method: 'POST' });
           const data = await res.json();
           alert(data.message);
           loadAttendanceData();
         }
+
         async function addManualRecord() {
           const date = document.getElementById('mDate').value;
           const clockIn = document.getElementById('mIn').value;
@@ -480,12 +577,19 @@ app.get('/employee', (req, res) => {
           });
           const data = await res.json();
           alert(data.message);
-          if (res.ok) loadAttendanceData();
+          if (res.ok) {
+            document.getElementById('mDate').value = '';
+            document.getElementById('mIn').value = '';
+            document.getElementById('mOut').value = '';
+            loadAttendanceData();
+          }
         }
+
         async function logout() {
           await fetch('/api/logout', { method: 'POST' });
           location.href = '/';
         }
+
         init();
       </script>
     </body>
