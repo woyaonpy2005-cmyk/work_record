@@ -6,7 +6,11 @@ const bcrypt = require('bcryptjs');
 const app = express();
 const PORT = process.env.PORT || 3000;
 
-// 💡 提取自你的 project 连接字符串
+// 💡 配置你所在的时区偏移量（如马来西亚/中国时间为 +08:00）
+const TIMEZONE_OFFSET = '+08:00'; 
+const TIMEZONE_NAME = 'Asia/Kuala_Lumpur'; // 可根据实际需求调整，如 'Asia/Shanghai'
+
+// 💡 数据库连接字符串
 const MONGO_URI = process.env.MONGO_URI || "mongodb+srv://woyaonpy2005_db_user:Lim050831.@cluster0.ztvp8bb.mongodb.net/attendance_db?appName=Cluster0";
 
 app.use(express.json());
@@ -55,8 +59,14 @@ mongoose.connect(MONGO_URI)
   })
   .catch(err => console.error('❌ MongoDB Atlas 连接失败:', err));
 
-// 辅助函数
-const getTodayStr = () => new Date().toISOString().split('T')[0];
+// 辅助函数：按本地时区获取 YYYY-MM-DD
+const getTodayStr = () => {
+  const d = new Date();
+  // 转换为指定的本地时间字符串并截取日期
+  const localDate = d.toLocaleDateString('en-CA', { timeZone: TIMEZONE_NAME }); // 'en-CA' 格式为 YYYY-MM-DD
+  return localDate;
+};
+
 const calculateHours = (inTime, outTime) => {
   if (!inTime || !outTime) return { workHours: 0, otHours: 0 };
   const diffMs = new Date(outTime) - new Date(inTime);
@@ -183,7 +193,7 @@ app.post('/api/attendance/toggle', async (req, res) => {
   }
 });
 
-// 手动添加/修改记录 API
+// 🔧 手动添加/修改记录 API（核心修复点：强制指定时区偏移）
 app.post('/api/attendance/manual', async (req, res) => {
   const user = req.session.user;
   if (!user) return res.status(401).json({ message: '未登录' });
@@ -193,8 +203,14 @@ app.post('/api/attendance/manual', async (req, res) => {
 
   const updateUserId = (user.role === 'admin' && targetUserId) ? targetUserId : user.userId;
 
-  const inDateTime = new Date(`${date}T${clockIn}`);
-  const outDateTime = new Date(`${date}T${clockOut}`);
+  // 💡 加上 TIMEZONE_OFFSET (+08:00)，避免 JavaScript 默认按 UTC 转换导致时间偏离 8 小时
+  const inDateTime = new Date(`${date}T${clockIn}:00${TIMEZONE_OFFSET}`);
+  const outDateTime = new Date(`${date}T${clockOut}:00${TIMEZONE_OFFSET}`);
+
+  if (isNaN(inDateTime.getTime()) || isNaN(outDateTime.getTime())) {
+    return res.status(400).json({ message: '输入的日期或时间格式不正确' });
+  }
+
   if (outDateTime <= inDateTime) return res.status(400).json({ message: '签退时间必须晚于签到时间' });
 
   const { workHours, otHours } = calculateHours(inDateTime, outDateTime);
@@ -502,14 +518,18 @@ app.get('/employee', (req, res) => {
         let currentUser = null;
         let targetUserId = '';
 
-        // ✨ 强制转换为 24 小时制格式 HH:mm
+        // 🔧 强制提取 24 小时制本地时间 HH:mm
         function formatTo24HourTime(dateIsoStr) {
           if (!dateIsoStr) return '';
           const d = new Date(dateIsoStr);
           if (isNaN(d.getTime())) return '';
-          const hours = String(d.getHours()).padStart(2, '0');
-          const minutes = String(d.getMinutes()).padStart(2, '0');
-          return \`\${hours}:\${minutes}\`;
+          // 💡 使用 Intl.DateTimeFormat 确保格式永远符合本地 24 小时制
+          return d.toLocaleTimeString('zh-CN', {
+            hour12: false,
+            hour: '2-digit',
+            minute: '2-digit',
+            timeZone: 'Asia/Kuala_Lumpur' // 与后端保持一致的时区
+          });
         }
 
         async function init() {
@@ -542,7 +562,6 @@ app.get('/employee', (req, res) => {
             } else if (data.todayRecord.clockIn && !data.todayRecord.clockOut) {
               btn.innerText = "下班打卡 (OUT)";
               btn.className = "w-full h-24 text-xl font-bold rounded-xl text-white bg-red-500 hover:bg-red-600 transition";
-              // 打卡提示也使用 24 小时制
               status.innerText = \`已签到：\${formatTo24HourTime(data.todayRecord.clockIn)}\`;
             } else {
               btn.innerText = "今日打卡完成";
