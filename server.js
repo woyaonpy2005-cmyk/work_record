@@ -191,23 +191,13 @@ app.post('/api/attendance/toggle', async (req, res) => {
   }
 });
 
-// 🔧 手动添加/修改记录 API（强化格式校验）
+// 手动添加/修改记录 API
 app.post('/api/attendance/manual', async (req, res) => {
   const user = req.session.user;
   if (!user) return res.status(401).json({ message: '未登录' });
 
   let { date, clockIn, clockOut, targetUserId } = req.body;
-  if (!date || !clockIn || !clockOut) return res.status(400).json({ message: '请完整填写日期与时间' });
-
-  // 格式化验证 HH:mm 格式（例如支持输入 9:00 -> 自动补齐 09:00）
-  const timeRegex = /^([0-1]?[0-9]|2[0-3]):[0-5][0-9]$/;
-  if (!timeRegex.test(clockIn) || !timeRegex.test(clockOut)) {
-    return res.status(400).json({ message: '时间格式不正确！请输入形如 09:00 或 18:00 的24小时制时间' });
-  }
-
-  // 如果输入的是 9:00 补全为 09:00
-  if (clockIn.length === 4) clockIn = '0' + clockIn;
-  if (clockOut.length === 4) clockOut = '0' + clockOut;
+  if (!date || !clockIn || !clockOut) return res.status(400).json({ message: '请选择完整的日期与时间' });
 
   const updateUserId = (user.role === 'admin' && targetUserId) ? targetUserId : user.userId;
 
@@ -477,21 +467,25 @@ app.get('/employee', (req, res) => {
           </div>
         </div>
 
-        <!-- 📝 补录与修改区域 (已改为纯文本框，不再有 AM/PM 弹出选择) -->
+        <!-- 📝 补录与修改区域 (下拉框直接选择 24 小时制) -->
         <div id="manualArea" class="bg-white p-6 rounded-xl shadow-sm no-print">
-          <h3 id="formTitle" class="text-lg font-bold mb-4">添加/修改打卡记录</h3>
+          <h3 id="formTitle" class="text-lg font-bold mb-4">添加/修改打卡记录 (选择 24 小时制时间)</h3>
           <div class="grid grid-cols-4 gap-4">
             <div>
               <label class="text-xs text-gray-400">选择日期</label>
-              <input type="date" id="mDate" class="border p-2 rounded-lg w-full">
+              <input type="date" id="mDate" class="border p-2 rounded-lg w-full bg-white">
             </div>
             <div>
-              <label class="text-xs text-gray-400">上班时间 (例: 10:00)</label>
-              <input type="text" id="mIn" placeholder="10:00" class="border p-2 rounded-lg w-full">
+              <label class="text-xs text-gray-400">上班时间</label>
+              <select id="mIn" class="border p-2 rounded-lg w-full bg-white outline-none focus:ring-2 focus:ring-indigo-500">
+                <option value="">-- 选择时间 --</option>
+              </select>
             </div>
             <div>
-              <label class="text-xs text-gray-400">下班时间 (例: 18:00)</label>
-              <input type="text" id="mOut" placeholder="18:00" class="border p-2 rounded-lg w-full">
+              <label class="text-xs text-gray-400">下班时间</label>
+              <select id="mOut" class="border p-2 rounded-lg w-full bg-white outline-none focus:ring-2 focus:ring-indigo-500">
+                <option value="">-- 选择时间 --</option>
+              </select>
             </div>
             <div class="flex items-end">
               <button onclick="addManualRecord()" class="bg-indigo-600 text-white w-full py-2 rounded-lg font-semibold hover:bg-indigo-700 transition">保存记录</button>
@@ -525,6 +519,23 @@ app.get('/employee', (req, res) => {
         let currentUser = null;
         let targetUserId = '';
 
+        // 💡 动态生成 24 小时制下拉时间选项（每半小时间隔：00:00, 00:30 ... 23:30）
+        function populateTimeDropdowns() {
+          const inSelect = document.getElementById('mIn');
+          const outSelect = document.getElementById('mOut');
+          
+          let optionsHtml = '<option value="">-- 请选择 --</option>';
+          for (let h = 0; h < 24; h++) {
+            for (let m of ['00', '30']) {
+              const hourStr = String(h).padStart(2, '0');
+              const timeVal = \`\${hourStr}:\${m}\`;
+              optionsHtml += \`<option value="\${timeVal}">\${timeVal}</option>\`;
+            }
+          }
+          inSelect.innerHTML = optionsHtml;
+          outSelect.innerHTML = optionsHtml;
+        }
+
         function formatTo24HourTime(dateIsoStr) {
           if (!dateIsoStr) return '';
           const d = new Date(dateIsoStr);
@@ -539,6 +550,7 @@ app.get('/employee', (req, res) => {
         }
 
         async function init() {
+          populateTimeDropdowns(); // 初始化填充时间列表
           const res = await fetch('/api/me');
           if (!res.ok) return location.href = '/';
           currentUser = await res.json();
@@ -635,6 +647,10 @@ app.get('/employee', (req, res) => {
           const clockIn = document.getElementById('mIn').value;
           const clockOut = document.getElementById('mOut').value;
           
+          if (!date || !clockIn || !clockOut) {
+            return alert('请完整选择日期以及具体的上下班时间！');
+          }
+
           const res = await fetch('/api/attendance/manual', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
