@@ -140,7 +140,6 @@ app.post('/api/admin/update-employee', async (req, res) => {
     return res.status(400).json({ message: '请填写完整的员工信息' });
   }
 
-  // 如果修改了 ID，检查新 ID 是否被其他账号占用
   if (originalUserId !== newUserId) {
     const exists = await User.findOne({ userId: newUserId });
     if (exists) return res.status(400).json({ message: '新员工ID已被其他账号占用' });
@@ -149,7 +148,6 @@ app.post('/api/admin/update-employee', async (req, res) => {
   const user = await User.findOne({ userId: originalUserId });
   if (!user) return res.status(404).json({ message: '找不到该员工' });
 
-  // 更新员工字段
   user.userId = newUserId;
   user.name = newName;
   if (newPassword && newPassword.trim() !== '') {
@@ -157,7 +155,6 @@ app.post('/api/admin/update-employee', async (req, res) => {
   }
   await user.save();
 
-  // 如果员工 ID 发生了改变，同步更新该员工过去的所有考勤记录
   if (originalUserId !== newUserId) {
     await Attendance.updateMany({ userId: originalUserId }, { userId: newUserId });
   }
@@ -165,7 +162,7 @@ app.post('/api/admin/update-employee', async (req, res) => {
   res.json({ message: '员工信息修改成功！' });
 });
 
-// Admin API：删除/离职员工 (清理员工账号及其打卡记录)
+// Admin API：删除/离职员工
 app.delete('/api/admin/delete-employee', async (req, res) => {
   if (!req.session.user || req.session.user.role !== 'admin') {
     return res.status(403).json({ message: '无权限操作' });
@@ -173,25 +170,29 @@ app.delete('/api/admin/delete-employee', async (req, res) => {
   const { targetUserId } = req.body;
   if (!targetUserId) return res.status(400).json({ message: '缺少参数：员工ID' });
 
-  // 删除账号
   const deletedUser = await User.findOneAndDelete({ userId: targetUserId, role: 'employee' });
   if (!deletedUser) return res.status(404).json({ message: '未找到该员工账号' });
 
-  // 同步清理该员工的所有打卡记录
   await Attendance.deleteMany({ userId: targetUserId });
 
   res.json({ message: `员工 [${targetUserId}] 离职/删除成功，相关打卡记录已清理。` });
 });
 
-// 获取指定员工考勤数据
+// 获取指定员工考勤数据 (支持按月份 month=YYYY-MM 筛选)
 app.get('/api/attendance/:targetUserId', async (req, res) => {
   if (!req.session.user) return res.status(401).json({ message: '未登录' });
   
   const targetUserId = req.params.targetUserId;
+  const monthFilter = req.query.month; // 例如 "2026-08"
   const today = getTodayStr();
 
+  let query = { userId: targetUserId };
+  if (monthFilter) {
+    query.date = { $regex: `^${monthFilter}` };
+  }
+
   let todayRecord = await Attendance.findOne({ userId: targetUserId, date: today });
-  const history = await Attendance.find({ userId: targetUserId }).sort({ date: -1 });
+  const history = await Attendance.find(query).sort({ date: -1 });
 
   const totals = history.reduce((acc, item) => {
     acc.totalWork += item.workHours || 0;
@@ -348,7 +349,7 @@ app.get('/', (req, res) => {
   `);
 });
 
-// 页面 2：Admin 控制台 (包含修改信息和离职/删除功能)
+// 页面 2：Admin 控制台
 app.get('/admin', (req, res) => {
   res.send(`
     <!DOCTYPE html>
@@ -366,7 +367,6 @@ app.get('/admin', (req, res) => {
           <button onclick="logout()" class="bg-red-500 text-white px-4 py-2 rounded-lg w-full sm:w-auto">退出登录</button>
         </div>
 
-        <!-- 添加员工区块 -->
         <div class="bg-white p-4 md:p-6 rounded-xl shadow-sm">
           <h2 class="text-xl font-bold mb-4">➕ 添加新员工</h2>
           <div class="grid grid-cols-1 sm:grid-cols-3 gap-4">
@@ -382,14 +382,12 @@ app.get('/admin', (req, res) => {
           <button onclick="addEmployee()" class="mt-4 w-full sm:w-auto bg-green-600 text-white px-6 py-2 rounded-lg font-semibold hover:bg-green-700 transition">添加员工</button>
         </div>
 
-        <!-- 员工列表管理区块 -->
         <div class="bg-white p-4 md:p-6 rounded-xl shadow-sm">
           <h2 class="text-xl font-bold mb-4">👥 员工列表管理</h2>
           <div id="employeeList" class="grid grid-cols-1 sm:grid-cols-2 gap-4"></div>
         </div>
       </div>
 
-      <!-- ✏️ 编辑员工信息模态框 (Modal) -->
       <div id="editModal" class="fixed inset-0 bg-black/50 hidden flex items-center justify-center p-4 z-50">
         <div class="bg-white rounded-xl shadow-xl p-6 w-full max-w-md space-y-4">
           <div class="flex justify-between items-center border-b pb-3">
@@ -398,7 +396,7 @@ app.get('/admin', (req, res) => {
           </div>
           <input type="hidden" id="editOriginalUserId">
           <div>
-            <label class="block text-xs text-gray-500 mb-1">员工 ID (改变ID将同步更变考勤记录)</label>
+            <label class="block text-xs text-gray-500 mb-1">员工 ID</label>
             <input type="text" id="editUserId" class="w-full border p-2 rounded-lg outline-none focus:ring-2 focus:ring-blue-500">
           </div>
           <div>
@@ -559,7 +557,7 @@ app.get('/admin', (req, res) => {
   `);
 });
 
-// 页面 3：员工打卡/修改打卡页
+// 页面 3：员工打卡/修改打卡页 (新增近一礼拜/折叠显示 + 按月份筛选)
 app.get('/employee', (req, res) => {
   res.send(`
     <!DOCTYPE html>
@@ -594,14 +592,14 @@ app.get('/employee', (req, res) => {
 
         <div class="grid grid-cols-1 md:grid-cols-3 gap-6">
           <div class="bg-white p-4 md:p-6 rounded-xl shadow-sm md:col-span-2">
-            <h3 class="text-sm font-semibold text-gray-400 mb-2">累计考勤统计</h3>
+            <h3 class="text-sm font-semibold text-gray-400 mb-2">月度考勤统计</h3>
             <div class="grid grid-cols-2 gap-4">
               <div class="bg-blue-50 p-4 rounded-lg">
-                <div class="text-gray-500 text-xs sm:text-sm">总工作时长 (已扣除休息)</div>
+                <div class="text-gray-500 text-xs sm:text-sm">月总工作时长 (已扣除休息)</div>
                 <div class="text-2xl sm:text-3xl font-extrabold text-blue-600 mt-1"><span id="totalWork">0</span> 小时</div>
               </div>
               <div class="bg-orange-50 p-4 rounded-lg">
-                <div class="text-gray-500 text-xs sm:text-sm">总 OT (加班时长)</div>
+                <div class="text-gray-500 text-xs sm:text-sm">月总 OT (加班时长)</div>
                 <div class="text-2xl sm:text-3xl font-extrabold text-orange-600 mt-1"><span id="totalOt">0</span> 小时</div>
               </div>
             </div>
@@ -637,22 +635,39 @@ app.get('/employee', (req, res) => {
         </div>
 
         <!-- 历史记录表格 -->
-        <div class="bg-white p-4 md:p-6 rounded-xl shadow-sm overflow-x-auto">
-          <h3 class="text-lg font-bold mb-4">打卡历史记录</h3>
-          <table class="w-full text-left border-collapse min-w-[600px]">
-            <thead>
-              <tr class="border-b bg-gray-50 text-gray-600 text-sm">
-                <th class="p-3">日期</th>
-                <th class="p-3">上班打卡</th>
-                <th class="p-3">下班打卡</th>
-                <th class="p-3">实际工时</th>
-                <th class="p-3">OT 时长</th>
-                <th class="p-3">类型</th>
-                <th class="p-3 no-print">操作</th>
-              </tr>
-            </thead>
-            <tbody id="historyTable" class="divide-y text-sm"></tbody>
-          </table>
+        <div class="bg-white p-4 md:p-6 rounded-xl shadow-sm">
+          <div class="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4 mb-4">
+            <h3 class="text-lg font-bold">打卡历史记录</h3>
+            <!-- 📅 月份选择器 -->
+            <div class="flex items-center space-x-2 no-print">
+              <label class="text-sm text-gray-500 font-medium">查看月份：</label>
+              <input type="month" id="monthPicker" onchange="onMonthChange()" class="border border-gray-300 rounded-lg p-1.5 text-sm outline-none focus:ring-2 focus:ring-blue-500 bg-gray-50">
+            </div>
+          </div>
+
+          <div class="overflow-x-auto">
+            <table class="w-full text-left border-collapse min-w-[600px]">
+              <thead>
+                <tr class="border-b bg-gray-50 text-gray-600 text-sm">
+                  <th class="p-3">日期</th>
+                  <th class="p-3">上班打卡</th>
+                  <th class="p-3">下班打卡</th>
+                  <th class="p-3">实际工时</th>
+                  <th class="p-3">OT 时长</th>
+                  <th class="p-3">类型</th>
+                  <th class="p-3 no-print">操作</th>
+                </tr>
+              </thead>
+              <tbody id="historyTable" class="divide-y text-sm"></tbody>
+            </table>
+          </div>
+
+          <!-- 查看更多按钮 -->
+          <div id="showMoreContainer" class="mt-4 text-center hidden no-print">
+            <button id="showMoreBtn" onclick="toggleShowAllHistory()" class="bg-gray-100 text-gray-700 hover:bg-gray-200 px-6 py-2 rounded-lg font-semibold text-sm transition">
+              👇 展开更多本月历史记录
+            </button>
+          </div>
         </div>
       </div>
 
@@ -662,6 +677,9 @@ app.get('/employee', (req, res) => {
         let currentUser = null;
         let targetUserId = '';
         let pickerIn, pickerOut, pickerDate;
+        
+        let fullHistoryData = [];
+        let showAllHistory = false;
 
         function initTimePickers() {
           pickerDate = flatpickr("#mDate", { dateFormat: "Y-m-d" });
@@ -677,6 +695,11 @@ app.get('/employee', (req, res) => {
             dateFormat: "H:i",
             time_24hr: true
           });
+
+          // 初始化默认当前月份 (YYYY-MM)
+          const now = new Date();
+          const currentMonthStr = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}`;
+          document.getElementById('monthPicker').value = currentMonthStr;
         }
 
         function formatTo24HourTime(dateIsoStr) {
@@ -708,8 +731,10 @@ app.get('/employee', (req, res) => {
         }
 
         async function loadAttendanceData() {
-          const res = await fetch(\`/api/attendance/\${targetUserId}\`);
+          const selectedMonth = document.getElementById('monthPicker').value;
+          const res = await fetch(\`/api/attendance/\${targetUserId}?month=\${selectedMonth}\`);
           const data = await res.json();
+          
           document.getElementById('totalWork').innerText = data.totalWorkHours;
           document.getElementById('totalOt').innerText = data.totalOtHours;
 
@@ -732,8 +757,46 @@ app.get('/employee', (req, res) => {
             }
           }
 
+          fullHistoryData = data.history || [];
+          renderHistoryTable();
+        }
+
+        // 判断日期是否属于最近7天内
+        function isWithinLast7Days(dateStr) {
+          const today = new Date();
+          today.setHours(0,0,0,0);
+          const targetDate = new Date(dateStr);
+          const diffDays = (today - targetDate) / (1000 * 60 * 60 * 24);
+          return diffDays >= 0 && diffDays <= 7;
+        }
+
+        function renderHistoryTable() {
           const table = document.getElementById('historyTable');
-          table.innerHTML = data.history.map(row => {
+          const showMoreContainer = document.getElementById('showMoreContainer');
+          const showMoreBtn = document.getElementById('showMoreBtn');
+
+          if (fullHistoryData.length === 0) {
+            table.innerHTML = `<tr><td colspan="7" class="p-4 text-center text-gray-400">该月份暂无打卡记录</td></tr>`;
+            showMoreContainer.classList.add('hidden');
+            return;
+          }
+
+          let displayData = fullHistoryData;
+
+          // 未点击展开更多时，仅筛出最近 7 天的记录（如果不满7天记录但有更多数据，至少选前7条）
+          if (!showAllHistory) {
+            const recent7DaysData = fullHistoryData.filter(item => isWithinLast7Days(item.date));
+            displayData = recent7DaysData.length > 0 ? recent7DaysData : fullHistoryData.slice(0, 7);
+          }
+
+          if (fullHistoryData.length > displayData.length || showAllHistory) {
+            showMoreContainer.classList.remove('hidden');
+            showMoreBtn.innerText = showAllHistory ? "☝️ 折叠仅看近一礼拜" : `👇 查看本月更多记录 (共 \${fullHistoryData.length} 条)`;
+          } else {
+            showMoreContainer.classList.add('hidden');
+          }
+
+          table.innerHTML = displayData.map(row => {
             const inTime24 = formatTo24HourTime(row.clockIn);
             const outTime24 = formatTo24HourTime(row.clockOut);
             
@@ -752,6 +815,16 @@ app.get('/employee', (req, res) => {
               </tr>
             \`;
           }).join('');
+        }
+
+        function toggleShowAllHistory() {
+          showAllHistory = !showAllHistory;
+          renderHistoryTable();
+        }
+
+        function onMonthChange() {
+          showAllHistory = false;
+          loadAttendanceData();
         }
 
         function editRow(date, clockIn, clockOut) {
