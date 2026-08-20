@@ -34,8 +34,8 @@ const attendanceSchema = new mongoose.Schema({
   date: { type: String, required: true }, // YYYY-MM-DD
   clockIn: { type: Date, default: null },
   clockOut: { type: Date, default: null },
-  workHours: { type: Number, default: 0 },
-  otHours: { type: Number, default: 0 },
+  workHours: { type: Number, default: 0 }, // 存储工时（以小时为单位的小数）
+  otHours: { type: Number, default: 0 },   // 存储 OT 时长（以小时为单位的小数）
   isManual: { type: Boolean, default: false }
 });
 const Attendance = mongoose.model('Attendance', attendanceSchema);
@@ -65,16 +65,24 @@ const getTodayStr = () => {
   return d.toLocaleDateString('en-CA', { timeZone: TIMEZONE_NAME });
 };
 
+// 💡 重新调整后的工时计算逻辑（基于 8.5 小时减 1 小时休息 = 7.5 小时标准工时计算 OT）
 const calculateHours = (inTime, outTime) => {
   if (!inTime || !outTime) return { workHours: 0, otHours: 0 };
   const diffMs = new Date(outTime) - new Date(inTime);
   const totalHours = Math.max(0, diffMs / (1000 * 60 * 60));
-  const actualWork = Math.max(0, totalHours - 1); // 扣除1小时休息
-  const ot = Math.max(0, actualWork - 8);
-  const regularWork = Math.min(actualWork, 8);
+  
+  // 扣除 1 小时中间休息时间
+  const actualWork = Math.max(0, totalHours - 1); 
+  
+  // 标准工作时长改为 7.5 小时 (7小时30分钟)，超过部分算 OT
+  const STANDARD_WORK_HOURS = 7.5; 
+  
+  const ot = Math.max(0, actualWork - STANDARD_WORK_HOURS);
+  const regularWork = Math.min(actualWork, STANDARD_WORK_HOURS);
+  
   return {
-    workHours: parseFloat(regularWork.toFixed(2)),
-    otHours: parseFloat(ot.toFixed(2))
+    workHours: parseFloat(regularWork.toFixed(4)),
+    otHours: parseFloat(ot.toFixed(4))
   };
 };
 
@@ -183,7 +191,7 @@ app.get('/api/attendance/:targetUserId', async (req, res) => {
   if (!req.session.user) return res.status(401).json({ message: '未登录' });
   
   const targetUserId = req.params.targetUserId;
-  const monthFilter = req.query.month; // 例如 "2026-08"
+  const monthFilter = req.query.month;
   const today = getTodayStr();
 
   let query = { userId: targetUserId };
@@ -203,8 +211,8 @@ app.get('/api/attendance/:targetUserId', async (req, res) => {
   res.json({
     todayRecord,
     history,
-    totalWorkHours: parseFloat(totals.totalWork.toFixed(2)),
-    totalOtHours: parseFloat(totals.totalOt.toFixed(2))
+    totalWorkHours: parseFloat(totals.totalWork.toFixed(4)),
+    totalOtHours: parseFloat(totals.totalOt.toFixed(4))
   });
 });
 
@@ -557,7 +565,7 @@ app.get('/admin', (req, res) => {
   `);
 });
 
-// 页面 3：员工打卡/修改打卡页 (修复语法转义问题)
+// 页面 3：员工打卡/修改打卡页
 app.get('/employee', (req, res) => {
   res.send(`
     <!DOCTYPE html>
@@ -595,12 +603,12 @@ app.get('/employee', (req, res) => {
             <h3 class="text-sm font-semibold text-gray-400 mb-2">月度考勤统计</h3>
             <div class="grid grid-cols-2 gap-4">
               <div class="bg-blue-50 p-4 rounded-lg">
-                <div class="text-gray-500 text-xs sm:text-sm">月总工作时长 (已扣除休息)</div>
-                <div class="text-2xl sm:text-3xl font-extrabold text-blue-600 mt-1"><span id="totalWork">0</span> 小时</div>
+                <div class="text-gray-500 text-xs sm:text-sm">月总工作时长 (已扣休息)</div>
+                <div class="text-xl sm:text-2xl font-extrabold text-blue-600 mt-1" id="totalWork">0 小时</div>
               </div>
               <div class="bg-orange-50 p-4 rounded-lg">
                 <div class="text-gray-500 text-xs sm:text-sm">月总 OT (加班时长)</div>
-                <div class="text-2xl sm:text-3xl font-extrabold text-orange-600 mt-1"><span id="totalOt">0</span> 小时</div>
+                <div class="text-xl sm:text-2xl font-extrabold text-orange-600 mt-1" id="totalOt">0 小时</div>
               </div>
             </div>
           </div>
@@ -679,6 +687,18 @@ app.get('/employee', (req, res) => {
         let fullHistoryData = [];
         let showAllHistory = false;
 
+        // 💡 格式化工具：将数值小时转换为 "X 小时 Y 分钟"
+        function formatDuration(decimalHours) {
+          if (!decimalHours || decimalHours <= 0) return '0 小时';
+          const totalMinutes = Math.round(decimalHours * 60);
+          const hours = Math.floor(totalMinutes / 60);
+          const minutes = totalMinutes % 60;
+
+          if (hours === 0) return \`\${minutes} 分钟\`;
+          if (minutes === 0) return \`\${hours} 小时\`;
+          return \`\${hours} 小时 \${minutes} 分钟\`;
+        }
+
         function initTimePickers() {
           pickerDate = flatpickr("#mDate", { dateFormat: "Y-m-d" });
           pickerIn = flatpickr("#mIn", {
@@ -732,8 +752,9 @@ app.get('/employee', (req, res) => {
           const res = await fetch(\`/api/attendance/\${targetUserId}?month=\${selectedMonth}\`);
           const data = await res.json();
           
-          document.getElementById('totalWork').innerText = data.totalWorkHours;
-          document.getElementById('totalOt').innerText = data.totalOtHours;
+          // 💡 更新页面顶部总用时为几小时几分钟
+          document.getElementById('totalWork').innerText = formatDuration(data.totalWorkHours);
+          document.getElementById('totalOt').innerText = formatDuration(data.totalOtHours);
 
           if (currentUser.role === 'employee') {
             const btn = document.getElementById('clockBtn');
@@ -800,8 +821,9 @@ app.get('/employee', (req, res) => {
                 <td class="p-3 font-medium">\${row.date}</td>
                 <td class="p-3">\${inTime24 || '-'}</td>
                 <td class="p-3">\${outTime24 || '-'}</td>
-                <td class="p-3 font-semibold text-blue-600">\${row.workHours} 小时</td>
-                <td class="p-3 font-semibold text-orange-600">\${row.otHours} 小时</td>
+                <!-- 💡 此处以几小时几分钟展示 -->
+                <td class="p-3 font-semibold text-blue-600">\${formatDuration(row.workHours)}</td>
+                <td class="p-3 font-semibold text-orange-600">\${formatDuration(row.otHours)}</td>
                 <td class="p-3"><span class="px-2 py-1 text-xs rounded \${row.isManual ? 'bg-purple-100 text-purple-700' : 'bg-gray-100 text-gray-600'}">\${row.isManual ? '手动补录/修改' : '实时打卡'}</span></td>
                 <td class="p-3 no-print space-x-2">
                   <button onclick="editRow('\${row.date}', '\${inTime24}', '\${outTime24}')" class="text-indigo-600 hover:text-indigo-900 font-semibold text-xs border border-indigo-200 px-2 py-1 rounded hover:bg-indigo-50 transition">✏️ 修改</button>
