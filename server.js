@@ -2,17 +2,12 @@ const express = require('express');
 const mongoose = require('mongoose');
 const session = require('express-session');
 const bcrypt = require('bcryptjs');
+const cors = require('cors'); // 👈 1. 新增这行 [source: 3]
 
 const app = express();
 const PORT = process.env.PORT || 3000;
 
-// 时区配置
-const TIMEZONE_OFFSET = '+08:00'; 
-const TIMEZONE_NAME = 'Asia/Kuala_Lumpur';
-
-// 数据库连接字符串
-const MONGO_URI = process.env.MONGO_URI || "mongodb+srv://woyaonpy2005_db_user:Lim050831.@cluster0.ztvp8bb.mongodb.net/attendance_db?appName=Cluster0";
-
+app.use(cors()); // 👈 2. 新增这行，允许所有设备跨域调用 API [source: 3]
 app.use(express.json());
 app.use(session({
   secret: 'attendance_secret_key_123',
