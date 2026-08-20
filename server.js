@@ -557,7 +557,7 @@ app.get('/admin', (req, res) => {
   `);
 });
 
-// 页面 3：员工打卡/修改打卡页 (新增近一礼拜/折叠显示 + 按月份筛选)
+// 页面 3：员工打卡/修改打卡页 (修复语法转义问题)
 app.get('/employee', (req, res) => {
   res.send(`
     <!DOCTYPE html>
@@ -638,7 +638,6 @@ app.get('/employee', (req, res) => {
         <div class="bg-white p-4 md:p-6 rounded-xl shadow-sm">
           <div class="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4 mb-4">
             <h3 class="text-lg font-bold">打卡历史记录</h3>
-            <!-- 📅 月份选择器 -->
             <div class="flex items-center space-x-2 no-print">
               <label class="text-sm text-gray-500 font-medium">查看月份：</label>
               <input type="month" id="monthPicker" onchange="onMonthChange()" class="border border-gray-300 rounded-lg p-1.5 text-sm outline-none focus:ring-2 focus:ring-blue-500 bg-gray-50">
@@ -662,7 +661,6 @@ app.get('/employee', (req, res) => {
             </table>
           </div>
 
-          <!-- 查看更多按钮 -->
           <div id="showMoreContainer" class="mt-4 text-center hidden no-print">
             <button id="showMoreBtn" onclick="toggleShowAllHistory()" class="bg-gray-100 text-gray-700 hover:bg-gray-200 px-6 py-2 rounded-lg font-semibold text-sm transition">
               👇 展开更多本月历史记录
@@ -696,9 +694,8 @@ app.get('/employee', (req, res) => {
             time_24hr: true
           });
 
-          // 初始化默认当前月份 (YYYY-MM)
           const now = new Date();
-          const currentMonthStr = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}`;
+          const currentMonthStr = \`\${now.getFullYear()}-\${String(now.getMonth() + 1).padStart(2, '0')}\`;
           document.getElementById('monthPicker').value = currentMonthStr;
         }
 
@@ -761,7 +758,6 @@ app.get('/employee', (req, res) => {
           renderHistoryTable();
         }
 
-        // 判断日期是否属于最近7天内
         function isWithinLast7Days(dateStr) {
           const today = new Date();
           today.setHours(0,0,0,0);
@@ -776,14 +772,13 @@ app.get('/employee', (req, res) => {
           const showMoreBtn = document.getElementById('showMoreBtn');
 
           if (fullHistoryData.length === 0) {
-            table.innerHTML = `<tr><td colspan="7" class="p-4 text-center text-gray-400">该月份暂无打卡记录</td></tr>`;
+            table.innerHTML = '<tr><td colspan="7" class="p-4 text-center text-gray-400">该月份暂无打卡记录</td></tr>';
             showMoreContainer.classList.add('hidden');
             return;
           }
 
           let displayData = fullHistoryData;
 
-          // 未点击展开更多时，仅筛出最近 7 天的记录（如果不满7天记录但有更多数据，至少选前7条）
           if (!showAllHistory) {
             const recent7DaysData = fullHistoryData.filter(item => isWithinLast7Days(item.date));
             displayData = recent7DaysData.length > 0 ? recent7DaysData : fullHistoryData.slice(0, 7);
@@ -791,7 +786,7 @@ app.get('/employee', (req, res) => {
 
           if (fullHistoryData.length > displayData.length || showAllHistory) {
             showMoreContainer.classList.remove('hidden');
-            showMoreBtn.innerText = showAllHistory ? "☝️ 折叠仅看近一礼拜" : `👇 查看本月更多记录 (共 \${fullHistoryData.length} 条)`;
+            showMoreBtn.innerText = showAllHistory ? "☝️ 折叠仅看近一礼拜" : \`👇 查看本月更多记录 (共 \${fullHistoryData.length} 条)\`;
           } else {
             showMoreContainer.classList.add('hidden');
           }
