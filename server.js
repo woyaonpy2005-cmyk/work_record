@@ -111,6 +111,8 @@ app.post('/api/admin/add-employee', async (req, res) => {
     return res.status(403).json({ message: '无权限操作' });
   }
   const { userId, password, name } = req.body;
+  if (!userId || !password || !name) return res.status(400).json({ message: '请填写完整员工信息' });
+
   const exists = await User.findOne({ userId });
   if (exists) return res.status(400).json({ message: '员工ID已存在' });
 
@@ -128,19 +130,57 @@ app.get('/api/admin/employees', async (req, res) => {
   res.json(employees);
 });
 
-// Admin API：修改员工密码
-app.post('/api/admin/reset-password', async (req, res) => {
+// Admin API：修改员工信息 (支持修改 ID, 名字, 密码)
+app.post('/api/admin/update-employee', async (req, res) => {
   if (!req.session.user || req.session.user.role !== 'admin') {
     return res.status(403).json({ message: '无权限操作' });
   }
-  const { targetUserId, newPassword } = req.body;
-  if (!targetUserId || !newPassword) return res.status(400).json({ message: '请填写完整参数' });
+  const { originalUserId, newUserId, newName, newPassword } = req.body;
+  if (!originalUserId || !newUserId || !newName) {
+    return res.status(400).json({ message: '请填写完整的员工信息' });
+  }
 
-  const hashedPassword = await bcrypt.hash(newPassword, 10);
-  const updatedUser = await User.findOneAndUpdate({ userId: targetUserId }, { password: hashedPassword });
-  if (!updatedUser) return res.status(404).json({ message: '找不到该员工' });
+  // 如果修改了 ID，检查新 ID 是否被其他账号占用
+  if (originalUserId !== newUserId) {
+    const exists = await User.findOne({ userId: newUserId });
+    if (exists) return res.status(400).json({ message: '新员工ID已被其他账号占用' });
+  }
 
-  res.json({ message: `员工 ${targetUserId} 的密码已成功重置！` });
+  const user = await User.findOne({ userId: originalUserId });
+  if (!user) return res.status(404).json({ message: '找不到该员工' });
+
+  // 更新员工字段
+  user.userId = newUserId;
+  user.name = newName;
+  if (newPassword && newPassword.trim() !== '') {
+    user.password = await bcrypt.hash(newPassword, 10);
+  }
+  await user.save();
+
+  // 如果员工 ID 发生了改变，同步更新该员工过去的所有考勤记录
+  if (originalUserId !== newUserId) {
+    await Attendance.updateMany({ userId: originalUserId }, { userId: newUserId });
+  }
+
+  res.json({ message: '员工信息修改成功！' });
+});
+
+// Admin API：删除/离职员工 (清理员工账号及其打卡记录)
+app.delete('/api/admin/delete-employee', async (req, res) => {
+  if (!req.session.user || req.session.user.role !== 'admin') {
+    return res.status(403).json({ message: '无权限操作' });
+  }
+  const { targetUserId } = req.body;
+  if (!targetUserId) return res.status(400).json({ message: '缺少参数：员工ID' });
+
+  // 删除账号
+  const deletedUser = await User.findOneAndDelete({ userId: targetUserId, role: 'employee' });
+  if (!deletedUser) return res.status(404).json({ message: '未找到该员工账号' });
+
+  // 同步清理该员工的所有打卡记录
+  await Attendance.deleteMany({ userId: targetUserId });
+
+  res.json({ message: `员工 [${targetUserId}] 离职/删除成功，相关打卡记录已清理。` });
 });
 
 // 获取指定员工考勤数据
@@ -308,7 +348,7 @@ app.get('/', (req, res) => {
   `);
 });
 
-// 页面 2：Admin 控制台
+// 页面 2：Admin 控制台 (包含修改信息和离职/删除功能)
 app.get('/admin', (req, res) => {
   res.send(`
     <!DOCTYPE html>
@@ -326,8 +366,9 @@ app.get('/admin', (req, res) => {
           <button onclick="logout()" class="bg-red-500 text-white px-4 py-2 rounded-lg w-full sm:w-auto">退出登录</button>
         </div>
 
+        <!-- 添加员工区块 -->
         <div class="bg-white p-4 md:p-6 rounded-xl shadow-sm">
-          <h2 class="text-xl font-bold mb-4">添加新员工</h2>
+          <h2 class="text-xl font-bold mb-4">➕ 添加新员工</h2>
           <div class="grid grid-cols-1 sm:grid-cols-3 gap-4">
             <input type="text" id="newId" placeholder="员工 ID (例如: emp01)" class="border p-2 rounded-lg outline-none focus:ring-2 focus:ring-green-500">
             <input type="text" id="newName" placeholder="员工姓名" class="border p-2 rounded-lg outline-none focus:ring-2 focus:ring-green-500">
@@ -341,29 +382,48 @@ app.get('/admin', (req, res) => {
           <button onclick="addEmployee()" class="mt-4 w-full sm:w-auto bg-green-600 text-white px-6 py-2 rounded-lg font-semibold hover:bg-green-700 transition">添加员工</button>
         </div>
 
+        <!-- 员工列表管理区块 -->
         <div class="bg-white p-4 md:p-6 rounded-xl shadow-sm">
-          <h2 class="text-xl font-bold mb-4">🔑 重置员工密码</h2>
-          <div class="grid grid-cols-1 sm:grid-cols-2 gap-4">
-            <select id="resetUserId" class="border p-2 rounded-lg outline-none focus:ring-2 focus:ring-orange-500">
-              <option value="">-- 选择要重置密码的员工 --</option>
-            </select>
-            <div class="relative">
-              <input type="password" id="resetNewPass" placeholder="设置新密码" class="border p-2 pr-10 rounded-lg w-full outline-none focus:ring-2 focus:ring-orange-500">
-              <button type="button" onclick="togglePasswordVisibility('resetNewPass', 'eyeReset')" class="absolute inset-y-0 right-0 pr-3 flex items-center text-gray-500 hover:text-gray-700">
-                <span id="eyeReset">👁️</span>
-              </button>
-            </div>
-          </div>
-          <button onclick="resetPassword()" class="mt-4 w-full sm:w-auto bg-orange-500 text-white px-6 py-2 rounded-lg font-semibold hover:bg-orange-600 transition">修改密码</button>
-        </div>
-
-        <div class="bg-white p-4 md:p-6 rounded-xl shadow-sm">
-          <h2 class="text-xl font-bold mb-4">员工列表 (点击员工查看/修改其打卡页)</h2>
+          <h2 class="text-xl font-bold mb-4">👥 员工列表管理</h2>
           <div id="employeeList" class="grid grid-cols-1 sm:grid-cols-2 gap-4"></div>
         </div>
       </div>
 
+      <!-- ✏️ 编辑员工信息模态框 (Modal) -->
+      <div id="editModal" class="fixed inset-0 bg-black/50 hidden flex items-center justify-center p-4 z-50">
+        <div class="bg-white rounded-xl shadow-xl p-6 w-full max-w-md space-y-4">
+          <div class="flex justify-between items-center border-b pb-3">
+            <h3 class="text-lg font-bold">修改员工资料</h3>
+            <button onclick="closeEditModal()" class="text-gray-400 hover:text-gray-600 font-bold">✕</button>
+          </div>
+          <input type="hidden" id="editOriginalUserId">
+          <div>
+            <label class="block text-xs text-gray-500 mb-1">员工 ID (改变ID将同步更变考勤记录)</label>
+            <input type="text" id="editUserId" class="w-full border p-2 rounded-lg outline-none focus:ring-2 focus:ring-blue-500">
+          </div>
+          <div>
+            <label class="block text-xs text-gray-500 mb-1">员工姓名</label>
+            <input type="text" id="editName" class="w-full border p-2 rounded-lg outline-none focus:ring-2 focus:ring-blue-500">
+          </div>
+          <div>
+            <label class="block text-xs text-gray-500 mb-1">新密码 (如留空则维持原密码)</label>
+            <div class="relative">
+              <input type="password" id="editPass" placeholder="重置新密码(可选)" class="w-full border p-2 pr-10 rounded-lg outline-none focus:ring-2 focus:ring-blue-500">
+              <button type="button" onclick="togglePasswordVisibility('editPass', 'eyeEdit')" class="absolute inset-y-0 right-0 pr-3 flex items-center text-gray-500">
+                <span id="eyeEdit">👁️</span>
+              </button>
+            </div>
+          </div>
+          <div class="flex justify-end space-x-2 pt-2">
+            <button onclick="closeEditModal()" class="px-4 py-2 border rounded-lg text-gray-600 hover:bg-gray-100">取消</button>
+            <button onclick="submitEditEmployee()" class="px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 font-semibold">保存更新</button>
+          </div>
+        </div>
+      </div>
+
       <script>
+        let cachedEmployees = [];
+
         function togglePasswordVisibility(inputId, eyeIconId) {
           const input = document.getElementById(inputId);
           const icon = document.getElementById(eyeIconId);
@@ -385,19 +445,27 @@ app.get('/admin', (req, res) => {
 
         async function loadEmployees() {
           const res = await fetch('/api/admin/employees');
-          const list = await res.json();
+          cachedEmployees = await res.json();
           
           const container = document.getElementById('employeeList');
-          container.innerHTML = list.map(emp => \`
-            <div onclick="viewEmployee('\${emp.userId}')" class="p-4 border rounded-xl cursor-pointer hover:border-blue-500 hover:shadow-md transition bg-gray-50">
-              <div class="font-bold text-lg text-blue-600">\${emp.userId}</div>
-              <div class="text-gray-600">\${emp.name}</div>
+          if (cachedEmployees.length === 0) {
+            container.innerHTML = '<div class="text-gray-400 col-span-2 text-center py-4">暂无员工账号</div>';
+            return;
+          }
+
+          container.innerHTML = cachedEmployees.map(emp => \`
+            <div class="p-4 border rounded-xl flex flex-col justify-between bg-gray-50 shadow-sm hover:shadow transition">
+              <div>
+                <div class="font-bold text-lg text-blue-600">\${emp.userId}</div>
+                <div class="text-gray-700 font-medium">\${emp.name}</div>
+              </div>
+              <div class="mt-4 pt-3 border-t flex flex-wrap gap-2 text-xs">
+                <button onclick="viewEmployee('\${emp.userId}')" class="bg-blue-100 text-blue-700 px-3 py-1.5 rounded-lg font-semibold hover:bg-blue-200 transition">📅 查看考勤</button>
+                <button onclick="openEditModal('\${emp.userId}')" class="bg-amber-100 text-amber-800 px-3 py-1.5 rounded-lg font-semibold hover:bg-amber-200 transition">✏️ 修改资料</button>
+                <button onclick="deleteEmployee('\${emp.userId}', '\${emp.name}')" class="bg-red-100 text-red-700 px-3 py-1.5 rounded-lg font-semibold hover:bg-red-200 transition">🗑️ 离职/删除</button>
+              </div>
             </div>
           \`).join('');
-
-          const select = document.getElementById('resetUserId');
-          select.innerHTML = '<option value="">-- 选择要重置密码的员工 --</option>' + 
-            list.map(emp => \`<option value="\${emp.userId}">\${emp.userId} (\${emp.name})</option>\`).join('');
         }
 
         async function addEmployee() {
@@ -419,24 +487,59 @@ app.get('/admin', (req, res) => {
           }
         }
 
-        async function resetPassword() {
-          const targetUserId = document.getElementById('resetUserId').value;
-          const newPassword = document.getElementById('resetNewPass').value;
+        function openEditModal(userId) {
+          const emp = cachedEmployees.find(e => e.userId === userId);
+          if (!emp) return;
 
-          if (!targetUserId || !newPassword) {
-            return alert('请选择员工并输入新密码！');
+          document.getElementById('editOriginalUserId').value = emp.userId;
+          document.getElementById('editUserId').value = emp.userId;
+          document.getElementById('editName').value = emp.name;
+          document.getElementById('editPass').value = '';
+
+          document.getElementById('editModal').classList.remove('hidden');
+        }
+
+        function closeEditModal() {
+          document.getElementById('editModal').classList.add('hidden');
+        }
+
+        async function submitEditEmployee() {
+          const originalUserId = document.getElementById('editOriginalUserId').value;
+          const newUserId = document.getElementById('editUserId').value.trim();
+          const newName = document.getElementById('editName').value.trim();
+          const newPassword = document.getElementById('editPass').value.trim();
+
+          if (!newUserId || !newName) {
+            return alert('员工 ID 和姓名不能为空！');
           }
 
-          const res = await fetch('/api/admin/reset-password', {
+          const res = await fetch('/api/admin/update-employee', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ targetUserId, newPassword })
+            body: JSON.stringify({ originalUserId, newUserId, newName, newPassword })
           });
           const data = await res.json();
           alert(data.message);
           if (res.ok) {
-            document.getElementById('resetUserId').value = '';
-            document.getElementById('resetNewPass').value = '';
+            closeEditModal();
+            loadEmployees();
+          }
+        }
+
+        async function deleteEmployee(userId, name) {
+          if (!confirm(\`确认要办理员工 [\${name} (\${userId})] 的离职/删除吗？\\n此操作会将该员工的账号以及所有打卡数据一同清理，无法恢复！\`)) {
+            return;
+          }
+
+          const res = await fetch('/api/admin/delete-employee', {
+            method: 'DELETE',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ targetUserId: userId })
+          });
+          const data = await res.json();
+          alert(data.message);
+          if (res.ok) {
+            loadEmployees();
           }
         }
 
