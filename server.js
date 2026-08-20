@@ -1,19 +1,38 @@
 const express = require('express');
 const mongoose = require('mongoose');
 const session = require('express-session');
-const bcrypt = require('bcryptjs');
-const cors = require('cors'); // 👈 1. 新增这行 [source: 3]
+const cors = require('cors');
+const crypto = require('crypto'); // 使用 Node.js 内置加密模块，无需任何外部二进制依赖
 
 const app = express();
 const PORT = process.env.PORT || 3000;
 
-app.use(cors()); // 👈 2. 新增这行，允许所有设备跨域调用 API [source: 3]
+// 时区配置（如马来西亚/中国时间为 +08:00）
+const TIMEZONE_OFFSET = '+08:00'; 
+const TIMEZONE_NAME = 'Asia/Kuala_Lumpur';
+
+// 数据库连接字符串
+const MONGO_URI = process.env.MONGO_URI || "mongodb+srv://woyaonpy2005_db_user:Lim050831.@cluster0.ztvp8bb.mongodb.net/attendance_db?appName=Cluster0";
+
+// 跨域与基础中间件设置
+app.use(cors());
 app.use(express.json());
 app.use(session({
   secret: 'attendance_secret_key_123',
   resave: false,
-  saveUninitialized: false
+  saveUninitialized: false,
+  cookie: { secure: false } // 适应 HTTP / HTTPS 部署
 }));
+
+// ==================== 0. 安全密码哈希（内置 Node Crypto） ====================
+function hashPassword(password) {
+  const salt = 'attendance_salt_2026';
+  return crypto.pbkdf2Sync(password, salt, 1000, 64, 'sha512').toString('hex');
+}
+
+function verifyPassword(password, hashedPassword) {
+  return hashPassword(password) === hashedPassword;
+}
 
 // ==================== 1. 数据库模型定义 ====================
 const userSchema = new mongoose.Schema({
@@ -21,7 +40,7 @@ const userSchema = new mongoose.Schema({
   password: { type: String, required: true },
   name: { type: String, required: true },
   role: { type: String, enum: ['admin', 'employee'], default: 'employee' },
-  status: { type: String, enum: ['active', 'resigned'], default: 'active' } // 增加员工状态
+  status: { type: String, enum: ['active', 'resigned'], default: 'active' } // 员工状态: 在职/已离职
 });
 const User = mongoose.model('User', userSchema);
 
@@ -42,7 +61,7 @@ mongoose.connect(MONGO_URI)
     console.log('✅ 成功连接至 MongoDB Atlas 云数据库');
     const adminExists = await User.findOne({ userId: 'admin123' });
     if (!adminExists) {
-      const hashedPassword = await bcrypt.hash('123456789', 10);
+      const hashedPassword = hashPassword('123456789');
       await User.create({
         userId: 'admin123',
         password: hashedPassword,
@@ -75,16 +94,20 @@ const calculateHours = (inTime, outTime) => {
 
 // 登录 API
 app.post('/api/login', async (req, res) => {
-  const { userId, password } = req.body;
-  const user = await User.findOne({ userId });
-  if (!user) return res.status(400).json({ message: '账号不存在' });
-  if (user.status === 'resigned') return res.status(403).json({ message: '该员工账号已标记为离职，禁用登录' });
+  try {
+    const { userId, password } = req.body;
+    const user = await User.findOne({ userId });
+    if (!user) return res.status(400).json({ message: '账号不存在' });
+    if (user.status === 'resigned') return res.status(403).json({ message: '该员工账号已标记为离职，禁用登录' });
 
-  const isMatch = await bcrypt.compare(password, user.password);
-  if (!isMatch) return res.status(400).json({ message: '密码错误' });
+    const isMatch = verifyPassword(password, user.password);
+    if (!isMatch) return res.status(400).json({ message: '密码错误' });
 
-  req.session.user = { userId: user.userId, role: user.role, name: user.name };
-  res.json({ role: user.role, userId: user.userId });
+    req.session.user = { userId: user.userId, role: user.role, name: user.name };
+    res.json({ role: user.role, userId: user.userId });
+  } catch (err) {
+    res.status(500).json({ message: '服务器内部错误' });
+  }
 });
 
 // 获取当前登录人
@@ -110,7 +133,7 @@ app.post('/api/admin/add-employee', async (req, res) => {
   const exists = await User.findOne({ userId });
   if (exists) return res.status(400).json({ message: '员工ID已存在' });
 
-  const hashedPassword = await bcrypt.hash(password, 10);
+  const hashedPassword = hashPassword(password);
   await User.create({ userId, password: hashedPassword, name, role: 'employee', status: 'active' });
   res.json({ message: '员工添加成功' });
 });
@@ -125,17 +148,15 @@ app.post('/api/admin/update-employee', async (req, res) => {
   const user = await User.findOne({ userId: oldUserId });
   if (!user) return res.status(404).json({ message: '找不到该员工' });
 
-  // 如果修改了 ID，检测冲突
   if (oldUserId !== newUserId) {
     const duplicate = await User.findOne({ userId: newUserId });
     if (duplicate) return res.status(400).json({ message: '新的员工 ID 已被占用' });
     user.userId = newUserId;
-    // 同步更新打卡历史中的 ID
     await Attendance.updateMany({ userId: oldUserId }, { userId: newUserId });
   }
 
   if (newName) user.name = newName;
-  if (newPassword) user.password = await bcrypt.hash(newPassword, 10);
+  if (newPassword) user.password = hashPassword(newPassword);
 
   await user.save();
   res.json({ message: '员工资料更新成功！' });
@@ -151,7 +172,7 @@ app.post('/api/admin/toggle-status', async (req, res) => {
   res.json({ message: `员工状态已更新为：${status === 'resigned' ? '已离职' : '在职'}` });
 });
 
-// Admin API：删除员工
+// Admin API：彻底删除员工
 app.delete('/api/admin/delete-employee', async (req, res) => {
   if (!req.session.user || req.session.user.role !== 'admin') {
     return res.status(403).json({ message: '无权限操作' });
@@ -171,7 +192,7 @@ app.get('/api/admin/employees', async (req, res) => {
   res.json(employees);
 });
 
-// 获取指定员工考勤数据 (按月份支持)
+// 获取指定员工考勤数据 (支持按月份筛选)
 app.get('/api/attendance/:targetUserId', async (req, res) => {
   if (!req.session.user) return res.status(401).json({ message: '未登录' });
   
@@ -181,7 +202,6 @@ app.get('/api/attendance/:targetUserId', async (req, res) => {
 
   let todayRecord = await Attendance.findOne({ userId: targetUserId, date: today });
   
-  // 按月份正向/倒序查询
   const monthRegex = new RegExp(`^${month}`);
   const history = await Attendance.find({ userId: targetUserId, date: monthRegex }).sort({ date: -1 });
 
@@ -392,7 +412,7 @@ app.get('/admin', (req, res) => {
       </div>
 
       <!-- 修改员工 Modal 弹窗 -->
-      <div id="editModal" class="fixed inset-0 bg-black bg-opacity-40 flex items-center justify-center hidden p-4">
+      <div id="editModal" class="fixed inset-0 bg-black bg-opacity-40 flex items-center justify-center hidden p-4 z-50">
         <div class="bg-white p-6 rounded-xl shadow-lg w-full max-w-md space-y-4">
           <h3 class="text-lg font-bold">修改员工资料</h3>
           <input type="hidden" id="editOldUserId">
@@ -593,7 +613,6 @@ app.get('/employee', (req, res) => {
           <div class="bg-white p-6 rounded-xl shadow-sm md:col-span-2">
             <div class="flex justify-between items-center mb-4">
               <h3 class="text-sm font-semibold text-gray-500">月份考勤统计</h3>
-              <!-- 月份选择器 -->
               <input type="month" id="monthFilter" onchange="loadAttendanceData()" class="border p-1 rounded-lg text-sm bg-gray-50 outline-none">
             </div>
             <div class="grid grid-cols-2 gap-4">
@@ -673,8 +692,8 @@ app.get('/employee', (req, res) => {
         let targetUserId = '';
         let pickerIn, pickerOut, pickerDate;
         
-        let allMonthRecords = []; // 当月所有数据
-        let showAll = false; // 是否展开了全部记录
+        let allMonthRecords = [];
+        let showAll = false;
 
         function initTimePickers() {
           pickerDate = flatpickr("#mDate", { dateFormat: "Y-m-d" });
@@ -694,7 +713,6 @@ app.get('/employee', (req, res) => {
         async function init() {
           initTimePickers();
           
-          // 初始化默认月份为当月 YYYY-MM
           const now = new Date();
           const currentMonth = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}`;
           document.getElementById('monthFilter').value = currentMonth;
@@ -747,7 +765,6 @@ app.get('/employee', (req, res) => {
           const showMoreContainer = document.getElementById('showMoreContainer');
           const showMoreBtn = document.getElementById('showMoreBtn');
 
-          // 如果不展开且大于7条，截取前7条展示
           const displayRecords = (showAll || allMonthRecords.length <= 7) ? allMonthRecords : allMonthRecords.slice(0, 7);
 
           if (allMonthRecords.length > 7) {
