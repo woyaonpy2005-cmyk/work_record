@@ -14,10 +14,13 @@ const TIMEZONE_NAME = 'Asia/Kuala_Lumpur';
 const MONGO_URI = process.env.MONGO_URI || "mongodb+srv://woyaonpy2005_db_user:Lim050831.@cluster0.ztvp8bb.mongodb.net/attendance_db?appName=Cluster0";
 
 app.use(express.json());
+
+// 💡 1. 后端 Session 配置：加入 5 分钟 (300,000 毫秒) 自动过期
 app.use(session({
   secret: 'attendance_secret_key_123',
   resave: false,
-  saveUninitialized: false
+  saveUninitialized: false,
+  cookie: { maxAge: 5 * 60 * 1000 } // 5 分钟未活动自动失效
 }));
 
 // ==================== 1. 数据库模型定义 ====================
@@ -103,7 +106,7 @@ app.post('/api/login', async (req, res) => {
 
 // 获取当前登录人
 app.get('/api/me', (req, res) => {
-  if (!req.session.user) return res.status(401).json({ message: '未登录' });
+  if (!req.session.user) return res.status(401).json({ message: '未登录或登录已超时' });
   res.json(req.session.user);
 });
 
@@ -188,7 +191,7 @@ app.delete('/api/admin/delete-employee', async (req, res) => {
 
 // 获取指定员工考勤数据 (支持按月份 month=YYYY-MM 筛选)
 app.get('/api/attendance/:targetUserId', async (req, res) => {
-  if (!req.session.user) return res.status(401).json({ message: '未登录' });
+  if (!req.session.user) return res.status(401).json({ message: '未登录或登录已超时' });
   
   const targetUserId = req.params.targetUserId;
   const monthFilter = req.query.month;
@@ -243,7 +246,7 @@ app.post('/api/attendance/toggle', async (req, res) => {
 // 手动添加/修改记录 API
 app.post('/api/attendance/manual', async (req, res) => {
   const user = req.session.user;
-  if (!user) return res.status(401).json({ message: '未登录' });
+  if (!user) return res.status(401).json({ message: '未登录或登录已超时' });
 
   let { date, clockIn, clockOut, targetUserId } = req.body;
   if (!date || !clockIn || !clockOut) return res.status(400).json({ message: '请选择完整的日期与时间' });
@@ -272,7 +275,7 @@ app.post('/api/attendance/manual', async (req, res) => {
 // 删除打卡记录 API
 app.delete('/api/attendance/delete', async (req, res) => {
   const user = req.session.user;
-  if (!user) return res.status(401).json({ message: '未登录' });
+  if (!user) return res.status(401).json({ message: '未登录或登录已超时' });
 
   const { date, targetUserId } = req.body;
   if (!date) return res.status(400).json({ message: '缺少参数：日期' });
@@ -430,6 +433,26 @@ app.get('/admin', (req, res) => {
       <script>
         let cachedEmployees = [];
 
+        // 💡 前端 5 分钟无操作自动登出逻辑
+        (function setupAutoLogout() {
+          let timer;
+          const FIVE_MINUTES = 5 * 60 * 1000;
+
+          function resetTimer() {
+            clearTimeout(timer);
+            timer = setTimeout(async () => {
+              alert('您已超过 5 分钟未进行任何操作，系统已自动登出。');
+              await logout();
+            }, FIVE_MINUTES);
+          }
+
+          window.onload = resetTimer;
+          document.onmousemove = resetTimer;
+          document.onkeypress = resetTimer;
+          document.onclick = resetTimer;
+          document.onscroll = resetTimer;
+        })();
+
         function togglePasswordVisibility(inputId, eyeIconId) {
           const input = document.getElementById(inputId);
           const icon = document.getElementById(eyeIconId);
@@ -451,6 +474,10 @@ app.get('/admin', (req, res) => {
 
         async function loadEmployees() {
           const res = await fetch('/api/admin/employees');
+          if (res.status === 401) {
+            alert('登录已超时，请重新登录');
+            return location.href = '/';
+          }
           cachedEmployees = await res.json();
           
           const container = document.getElementById('employeeList');
@@ -687,6 +714,26 @@ app.get('/employee', (req, res) => {
         let fullHistoryData = [];
         let showAllHistory = false;
 
+        // 💡 前端 5 分钟无操作自动登出逻辑
+        (function setupAutoLogout() {
+          let timer;
+          const FIVE_MINUTES = 5 * 60 * 1000;
+
+          function resetTimer() {
+            clearTimeout(timer);
+            timer = setTimeout(async () => {
+              alert('您已超过 5 分钟未进行任何操作，系统已自动登出。');
+              await logout();
+            }, FIVE_MINUTES);
+          }
+
+          window.onload = resetTimer;
+          document.onmousemove = resetTimer;
+          document.onkeypress = resetTimer;
+          document.onclick = resetTimer;
+          document.onscroll = resetTimer;
+        })();
+
         // 💡 格式化工具：将数值小时转换为 "X 小时 Y 分钟"
         function formatDuration(decimalHours) {
           if (!decimalHours || decimalHours <= 0) return '0 小时';
@@ -750,6 +797,10 @@ app.get('/employee', (req, res) => {
         async function loadAttendanceData() {
           const selectedMonth = document.getElementById('monthPicker').value;
           const res = await fetch(\`/api/attendance/\${targetUserId}?month=\${selectedMonth}\`);
+          if (res.status === 401) {
+            alert('登录已超时，请重新登录');
+            return location.href = '/';
+          }
           const data = await res.json();
           
           // 💡 更新页面顶部总用时为几小时几分钟
