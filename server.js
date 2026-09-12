@@ -24,11 +24,16 @@ app.use(session({
 }));
 
 // ==================== 1. 数据库模型定义 ====================
+// 💡 默认黑白头像 SVG Data URI
+const DEFAULT_AVATAR = "data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='%236B7280'><path d='M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm0 3c1.66 0 3 1.34 3 3s-1.34 3-3 3-3-1.34-3-3 1.34-3 3-3zm0 14.2c-2.5 0-4.71-1.28-6-3.22.03-1.99 4-3.08 6-3.08 1.99 0 5.97 1.09 6 3.08-1.29 1.94-3.5 3.22-6 3.22z'/></svg>";
+
 const userSchema = new mongoose.Schema({
   userId: { type: String, required: true, unique: true },
   password: { type: String, required: true },
   name: { type: String, required: true },
-  role: { type: String, enum: ['admin', 'employee'], default: 'employee' }
+  role: { type: String, enum: ['admin', 'employee'], default: 'employee' },
+  avatarUrl: { type: String, default: DEFAULT_AVATAR }, // 💡 默认黑白头像
+  bgUrl: { type: String, default: '' }                  // 💡 默认背景 (为空时显示蓝色渐变)
 });
 const User = mongoose.model('User', userSchema);
 
@@ -37,10 +42,10 @@ const attendanceSchema = new mongoose.Schema({
   date: { type: String, required: true }, // YYYY-MM-DD
   clockIn: { type: Date, default: null },
   clockOut: { type: Date, default: null },
-  workHours: { type: Number, default: 0 }, // 存储工时（以小时为单位的小数）
-  otHours: { type: Number, default: 0 },   // 存储 OT 时长（以小时为单位的小数）
+  workHours: { type: Number, default: 0 }, 
+  otHours: { type: Number, default: 0 },   
   isManual: { type: Boolean, default: false },
-  remark: { type: String, default: '' }     // 💡 新增备注字段
+  remark: { type: String, default: '' }     
 });
 const Attendance = mongoose.model('Attendance', attendanceSchema);
 
@@ -69,16 +74,13 @@ const getTodayStr = () => {
   return d.toLocaleDateString('en-CA', { timeZone: TIMEZONE_NAME });
 };
 
-// 💡 重新调整后的工时计算逻辑（基于 8.5 小时减 1 小时休息 = 7.5 小时标准工时计算 OT）
+// 工时计算逻辑
 const calculateHours = (inTime, outTime) => {
   if (!inTime || !outTime) return { workHours: 0, otHours: 0 };
   const diffMs = new Date(outTime) - new Date(inTime);
   const totalHours = Math.max(0, diffMs / (1000 * 60 * 60));
   
-  // 扣除 1 小时中间休息时间
   const actualWork = Math.max(0, totalHours - 1); 
-  
-  // 标准工作时长改为 7.5 小时 (7小时30分钟)，超过部分算 OT
   const STANDARD_WORK_HOURS = 7.5; 
   
   const ot = Math.max(0, actualWork - STANDARD_WORK_HOURS);
@@ -101,13 +103,24 @@ app.post('/api/login', async (req, res) => {
   const isMatch = await bcrypt.compare(password, user.password);
   if (!isMatch) return res.status(400).json({ message: '密码错误' });
 
-  req.session.user = { userId: user.userId, role: user.role, name: user.name };
+  req.session.user = { 
+    userId: user.userId, 
+    role: user.role, 
+    name: user.name,
+    avatarUrl: user.avatarUrl || DEFAULT_AVATAR,
+    bgUrl: user.bgUrl || ''
+  };
   res.json({ role: user.role, userId: user.userId });
 });
 
 // 获取当前登录人
-app.get('/api/me', (req, res) => {
+app.get('/api/me', async (req, res) => {
   if (!req.session.user) return res.status(401).json({ message: '未登录或登录已超时' });
+  const user = await User.findOne({ userId: req.session.user.userId });
+  if (user) {
+    req.session.user.avatarUrl = user.avatarUrl || DEFAULT_AVATAR;
+    req.session.user.bgUrl = user.bgUrl || '';
+  }
   res.json(req.session.user);
 });
 
@@ -115,6 +128,23 @@ app.get('/api/me', (req, res) => {
 app.post('/api/logout', (req, res) => {
   req.session.destroy();
   res.json({ success: true });
+});
+
+// 💡 修改个人头像与背景 API
+app.post('/api/user/update-theme', async (req, res) => {
+  if (!req.session.user) return res.status(401).json({ message: '未登录或登录已超时' });
+  const { avatarUrl, bgUrl, targetUserId } = req.body;
+
+  const updateId = (req.session.user.role === 'admin' && targetUserId) ? targetUserId : req.session.user.userId;
+
+  const user = await User.findOne({ userId: updateId });
+  if (!user) return res.status(404).json({ message: '找不到该用户' });
+
+  if (avatarUrl !== undefined) user.avatarUrl = avatarUrl.trim() || DEFAULT_AVATAR;
+  if (bgUrl !== undefined) user.bgUrl = bgUrl.trim();
+
+  await user.save();
+  res.json({ message: '个性化设置（头像/背景）更新成功！', avatarUrl: user.avatarUrl, bgUrl: user.bgUrl });
 });
 
 // Admin API：添加员工
@@ -138,11 +168,11 @@ app.get('/api/admin/employees', async (req, res) => {
   if (!req.session.user || req.session.user.role !== 'admin') {
     return res.status(403).json({ message: '无权限操作' });
   }
-  const employees = await User.find({ role: 'employee' }, 'userId name');
+  const employees = await User.find({ role: 'employee' }, 'userId name avatarUrl bgUrl');
   res.json(employees);
 });
 
-// Admin API：修改员工信息 (支持修改 ID, 名字, 密码)
+// Admin API：修改员工信息
 app.post('/api/admin/update-employee', async (req, res) => {
   if (!req.session.user || req.session.user.role !== 'admin') {
     return res.status(403).json({ message: '无权限操作' });
@@ -190,13 +220,15 @@ app.delete('/api/admin/delete-employee', async (req, res) => {
   res.json({ message: `员工 [${targetUserId}] 离职/删除成功，相关打卡记录已清理。` });
 });
 
-// 获取指定员工考勤数据 (支持按月份 month=YYYY-MM 筛选)
+// 获取指定员工考勤数据与用户信息
 app.get('/api/attendance/:targetUserId', async (req, res) => {
   if (!req.session.user) return res.status(401).json({ message: '未登录或登录已超时' });
   
   const targetUserId = req.params.targetUserId;
   const monthFilter = req.query.month;
   const today = getTodayStr();
+
+  const userObj = await User.findOne({ userId: targetUserId }, 'userId name avatarUrl bgUrl');
 
   let query = { userId: targetUserId };
   if (monthFilter) {
@@ -213,6 +245,7 @@ app.get('/api/attendance/:targetUserId', async (req, res) => {
   }, { totalWork: 0, totalOt: 0 });
 
   res.json({
+    userInfo: userObj || {},
     todayRecord,
     history,
     totalWorkHours: parseFloat(totals.totalWork.toFixed(4)),
@@ -244,7 +277,7 @@ app.post('/api/attendance/toggle', async (req, res) => {
   }
 });
 
-// 手动添加/修改记录 API（包含备注参数）
+// 手动添加/修改记录 API
 app.post('/api/attendance/manual', async (req, res) => {
   const user = req.session.user;
   if (!user) return res.status(401).json({ message: '未登录或登录已超时' });
@@ -274,7 +307,7 @@ app.post('/api/attendance/manual', async (req, res) => {
       workHours, 
       otHours, 
       isManual: true,
-      remark: remark || '' // 💡 保存备注
+      remark: remark || ''
     },
     { upsert: true, new: true }
   );
@@ -443,7 +476,6 @@ app.get('/admin', (req, res) => {
       <script>
         let cachedEmployees = [];
 
-        // 💡 前端 5 分钟无操作自动登出逻辑
         (function setupAutoLogout() {
           let timer;
           const FIVE_MINUTES = 5 * 60 * 1000;
@@ -498,9 +530,12 @@ app.get('/admin', (req, res) => {
 
           container.innerHTML = cachedEmployees.map(emp => \`
             <div class="p-4 border rounded-xl flex flex-col justify-between bg-gray-50 shadow-sm hover:shadow transition">
-              <div>
-                <div class="font-bold text-lg text-blue-600">\${emp.userId}</div>
-                <div class="text-gray-700 font-medium">\${emp.name}</div>
+              <div class="flex items-center space-x-3">
+                <img src="\${emp.avatarUrl || '${DEFAULT_AVATAR}'}" class="w-12 h-12 rounded-full border border-gray-300 object-cover">
+                <div>
+                  <div class="font-bold text-lg text-blue-600">\${emp.userId}</div>
+                  <div class="text-gray-700 font-medium">\${emp.name}</div>
+                </div>
               </div>
               <div class="mt-4 pt-3 border-t flex flex-wrap gap-2 text-xs">
                 <button onclick="viewEmployee('\${emp.userId}')" class="bg-blue-100 text-blue-700 px-3 py-1.5 rounded-lg font-semibold hover:bg-blue-200 transition">📅 查看考勤</button>
@@ -570,7 +605,7 @@ app.get('/admin', (req, res) => {
         }
 
         async function deleteEmployee(userId, name) {
-          if (!confirm(\`确认要办理员工 [\${name} (\${userId})] 的离职/删除吗？\\n此操作会将该员工的账号以及所有打卡数据一同清理，无法恢复！\`)) {
+          if (!confirm(\`确认要办理员工 [\${name} (\${userId})] 的离职/删除吗？\`)) {
             return;
           }
 
@@ -615,51 +650,65 @@ app.get('/employee', (req, res) => {
       <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/flatpickr/dist/flatpickr.min.css">
       <script src="https://cdn.jsdelivr.net/npm/flatpickr"></script>
       <style>
+        /* 💡 默认背景：蓝色渐变 */
+        body {
+          background: linear-gradient(135deg, #1e3a8a 0%, #3b82f6 50%, #93c5fd 100%);
+          background-attachment: fixed;
+          background-size: cover;
+          background-position: center;
+          min-height: 100vh;
+        }
+
         @media print {
           .no-print { display: none !important; }
-          body { background: white; padding: 0; }
-          .shadow-sm, .shadow-md { box-shadow: none !important; }
+          body { background: white !important; padding: 0; }
+          .shadow-sm, .shadow-md, .shadow-xl { box-shadow: none !important; }
         }
       </style>
     </head>
-    <body class="bg-gray-50 min-h-screen p-4 md:p-8">
+    <body id="pageBody" class="p-4 md:p-8 transition-all duration-300">
       <div class="max-w-5xl mx-auto space-y-6">
-        <div class="flex flex-col sm:flex-row justify-between items-start sm:items-center bg-white p-4 md:p-6 rounded-xl shadow-sm gap-4">
-          <div>
-            <h1 class="text-xl md:text-2xl font-bold">员工打卡控制台</h1>
-            <p class="text-gray-500 mt-1">当前查看员工 ID: <span id="dispUserId" class="font-bold text-blue-600">---</span></p>
+
+        <!-- 💡 顶部控制台头部 (含左侧黑白头像/自定义头像) -->
+        <div class="flex flex-col sm:flex-row justify-between items-start sm:items-center bg-white/95 backdrop-blur-md p-4 md:p-6 rounded-xl shadow-md gap-4 border border-white/20">
+          <div class="flex items-center space-x-4">
+            <img id="userAvatar" src="${DEFAULT_AVATAR}" alt="头像" class="w-14 h-14 rounded-full border-2 border-gray-300 object-cover bg-gray-100 shadow-sm">
+            <div>
+              <h1 class="text-xl md:text-2xl font-bold text-gray-800">员工打卡控制台</h1>
+              <p class="text-gray-500 text-sm mt-0.5">当前查看员工 ID: <span id="dispUserId" class="font-bold text-blue-600">---</span></p>
+            </div>
           </div>
           <div class="space-x-2 no-print flex w-full sm:w-auto">
-            <button onclick="window.print()" class="bg-gray-700 text-white px-4 py-2 rounded-lg flex-1 sm:flex-none">🖨️ 打印记录</button>
-            <button id="logoutBtn" onclick="logout()" class="bg-red-500 text-white px-4 py-2 rounded-lg flex-1 sm:flex-none">退出登录</button>
+            <button onclick="window.print()" class="bg-gray-700 hover:bg-gray-800 text-white px-4 py-2 rounded-lg flex-1 sm:flex-none transition shadow-sm">🖨️ 打印记录</button>
+            <button id="logoutBtn" onclick="logout()" class="bg-red-500 hover:bg-red-600 text-white px-4 py-2 rounded-lg flex-1 sm:flex-none transition shadow-sm">退出登录</button>
           </div>
         </div>
 
         <div class="grid grid-cols-1 md:grid-cols-3 gap-6">
-          <div class="bg-white p-4 md:p-6 rounded-xl shadow-sm md:col-span-2">
+          <div class="bg-white/95 backdrop-blur-md p-4 md:p-6 rounded-xl shadow-md md:col-span-2">
             <h3 class="text-sm font-semibold text-gray-400 mb-2">月度考勤统计</h3>
             <div class="grid grid-cols-2 gap-4">
-              <div class="bg-blue-50 p-4 rounded-lg">
+              <div class="bg-blue-50/80 p-4 rounded-lg border border-blue-100">
                 <div class="text-gray-500 text-xs sm:text-sm">月总工作时长 (已扣休息)</div>
                 <div class="text-xl sm:text-2xl font-extrabold text-blue-600 mt-1" id="totalWork">0 小时</div>
               </div>
-              <div class="bg-orange-50 p-4 rounded-lg">
+              <div class="bg-orange-50/80 p-4 rounded-lg border border-orange-100">
                 <div class="text-gray-500 text-xs sm:text-sm">月总 OT (加班时长)</div>
                 <div class="text-xl sm:text-2xl font-extrabold text-orange-600 mt-1" id="totalOt">0 小时</div>
               </div>
             </div>
           </div>
-          <div id="clockArea" class="bg-white p-4 md:p-6 rounded-xl shadow-sm flex flex-col justify-center items-center no-print">
-            <button id="clockBtn" onclick="toggleClock()" class="w-full h-24 text-xl font-bold rounded-xl text-white transition bg-green-500 hover:bg-green-600">
+          <div id="clockArea" class="bg-white/95 backdrop-blur-md p-4 md:p-6 rounded-xl shadow-md flex flex-col justify-center items-center no-print">
+            <button id="clockBtn" onclick="toggleClock()" class="w-full h-24 text-xl font-bold rounded-xl text-white transition bg-green-500 hover:bg-green-600 shadow-md">
               上班打卡 (IN)
             </button>
             <p id="clockStatus" class="text-xs text-gray-400 mt-2 text-center">点击记录当前时刻</p>
           </div>
         </div>
 
-        <!-- 📝 补录与修改区域（增加了备注输入框） -->
-        <div id="manualArea" class="bg-white p-4 md:p-6 rounded-xl shadow-sm no-print">
-          <h3 id="formTitle" class="text-lg font-bold mb-4">添加/修改打卡记录</h3>
+        <!-- 📝 补录与修改区域 -->
+        <div id="manualArea" class="bg-white/95 backdrop-blur-md p-4 md:p-6 rounded-xl shadow-md no-print">
+          <h3 id="formTitle" class="text-lg font-bold mb-4 text-gray-800">添加/修改打卡记录</h3>
           <div class="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-5 gap-4">
             <div>
               <label class="text-xs text-gray-400">选择日期</label>
@@ -678,15 +727,15 @@ app.get('/employee', (req, res) => {
               <input type="text" id="mRemark" placeholder="如: 请假、外勤" class="border p-2 rounded-lg w-full bg-white outline-none focus:ring-2 focus:ring-indigo-500">
             </div>
             <div class="flex items-end">
-              <button onclick="addManualRecord()" class="bg-indigo-600 text-white w-full py-2 rounded-lg font-semibold hover:bg-indigo-700 transition">保存记录</button>
+              <button onclick="addManualRecord()" class="bg-indigo-600 text-white w-full py-2 rounded-lg font-semibold hover:bg-indigo-700 transition shadow">保存记录</button>
             </div>
           </div>
         </div>
 
         <!-- 历史记录表格 -->
-        <div class="bg-white p-4 md:p-6 rounded-xl shadow-sm">
+        <div class="bg-white/95 backdrop-blur-md p-4 md:p-6 rounded-xl shadow-md">
           <div class="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4 mb-4">
-            <h3 class="text-lg font-bold">打卡历史记录</h3>
+            <h3 class="text-lg font-bold text-gray-800">打卡历史记录</h3>
             <div class="flex items-center space-x-2 no-print">
               <label class="text-sm text-gray-500 font-medium">查看月份：</label>
               <input type="month" id="monthPicker" onchange="onMonthChange()" class="border border-gray-300 rounded-lg p-1.5 text-sm outline-none focus:ring-2 focus:ring-blue-500 bg-gray-50">
@@ -696,7 +745,7 @@ app.get('/employee', (req, res) => {
           <div class="overflow-x-auto">
             <table class="w-full text-left border-collapse min-w-[700px]">
               <thead>
-                <tr class="border-b bg-gray-50 text-gray-600 text-sm">
+                <tr class="border-b bg-gray-50/80 text-gray-600 text-sm">
                   <th class="p-3">日期 (星期)</th>
                   <th class="p-3">上班打卡</th>
                   <th class="p-3">下班打卡</th>
@@ -719,29 +768,62 @@ app.get('/employee', (req, res) => {
         </div>
       </div>
 
+      <!-- 💡 页面右下方推荐按钮：修改头像与背景 -->
+      <div class="fixed bottom-6 right-6 z-40 no-print">
+        <button onclick="openThemeModal()" class="bg-blue-600 hover:bg-blue-700 text-white font-semibold px-4 py-3 rounded-full shadow-2xl flex items-center space-x-2 transition transform hover:scale-105 border-2 border-white">
+          <span>🎨</span>
+          <span class="text-sm">自定义头像/背景</span>
+        </button>
+      </div>
+
+      <!-- 💡 修改头像与背景的弹窗 Modal -->
+      <div id="themeModal" class="fixed inset-0 bg-black/60 hidden flex items-center justify-center p-4 z-50 no-print">
+        <div class="bg-white rounded-2xl shadow-2xl p-6 w-full max-w-md space-y-5">
+          <div class="flex justify-between items-center border-b pb-3">
+            <h3 class="text-lg font-bold text-gray-800">修改头像与背景照片</h3>
+            <button onclick="closeThemeModal()" class="text-gray-400 hover:text-gray-600 font-bold">✕</button>
+          </div>
+          
+          <div>
+            <label class="block text-xs font-semibold text-gray-600 mb-1">头像链接 (Image URL)</label>
+            <input type="text" id="themeAvatarUrl" placeholder="输入头像图片链接(如留空则恢复默认黑白头像)" class="w-full border p-2.5 rounded-lg text-sm outline-none focus:ring-2 focus:ring-blue-500">
+            <p class="text-[11px] text-gray-400 mt-1">留空并保存即可重置为黑白头像</p>
+          </div>
+
+          <div>
+            <label class="block text-xs font-semibold text-gray-600 mb-1">背景照片链接 (Image URL)</label>
+            <input type="text" id="themeBgUrl" placeholder="输入背景图片链接(如留空则恢复默认蓝色背景)" class="w-full border p-2.5 rounded-lg text-sm outline-none focus:ring-2 focus:ring-blue-500">
+            <p class="text-[11px] text-gray-400 mt-1">留空并保存即可重置为默认蓝色渐变背景</p>
+          </div>
+
+          <div class="flex justify-end space-x-2 pt-2">
+            <button onclick="closeThemeModal()" class="px-4 py-2 border rounded-lg text-gray-600 hover:bg-gray-100 text-sm">取消</button>
+            <button onclick="saveThemeSettings()" class="px-5 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 font-semibold text-sm transition">保存生效</button>
+          </div>
+        </div>
+      </div>
+
       <script>
         const urlParams = new URLSearchParams(window.location.search);
         const viewUserId = urlParams.get('viewUserId');
         let currentUser = null;
         let targetUserId = '';
+        let currentTargetUserObj = null;
         let pickerIn, pickerOut, pickerDate;
         
         let fullHistoryData = [];
         let showAllHistory = false;
 
-        // 💡 星期映射转换
         const weekDays = ['星期日', '星期一', '星期二', '星期三', '星期四', '星期五', '星期六'];
 
         function formatDateWithDay(dateStr) {
           if (!dateStr) return '';
-          // 加上时间避免跨时区解析少一天的问题
           const d = new Date(dateStr + 'T00:00:00');
           if (isNaN(d.getTime())) return dateStr;
           const dayName = weekDays[d.getDay()];
           return \`\${dateStr} (\${dayName})\`;
         }
 
-        // 💡 前端 5 分钟无操作自动登出逻辑
         (function setupAutoLogout() {
           let timer;
           const FIVE_MINUTES = 5 * 60 * 1000;
@@ -761,7 +843,6 @@ app.get('/employee', (req, res) => {
           document.onscroll = resetTimer;
         })();
 
-        // 💡 格式化工具：将数值小时转换为 "X 小时 Y 分钟"
         function formatDuration(decimalHours) {
           if (!decimalHours || decimalHours <= 0) return '0 小时';
           const totalMinutes = Math.round(decimalHours * 60);
@@ -811,6 +892,7 @@ app.get('/employee', (req, res) => {
           const res = await fetch('/api/me');
           if (!res.ok) return location.href = '/';
           currentUser = await res.json();
+
           if (viewUserId && currentUser.role === 'admin') {
             targetUserId = viewUserId;
             document.getElementById('clockArea').classList.add('hidden');
@@ -821,6 +903,22 @@ app.get('/employee', (req, res) => {
           loadAttendanceData();
         }
 
+        // 💡 动态渲染背景与头像
+        function applyUserTheme(avatarUrl, bgUrl) {
+          const avatarImg = document.getElementById('userAvatar');
+          if (avatarImg) {
+            avatarImg.src = avatarUrl || "${DEFAULT_AVATAR}";
+          }
+
+          const body = document.getElementById('pageBody');
+          if (bgUrl && bgUrl.trim() !== '') {
+            body.style.background = \`url('\${bgUrl}') center/cover no-repeat fixed\`;
+          } else {
+            body.style.background = 'linear-gradient(135deg, #1e3a8a 0%, #3b82f6 50%, #93c5fd 100%)';
+            body.style.backgroundAttachment = 'fixed';
+          }
+        }
+
         async function loadAttendanceData() {
           const selectedMonth = document.getElementById('monthPicker').value;
           const res = await fetch(\`/api/attendance/\${targetUserId}?month=\${selectedMonth}\`);
@@ -829,8 +927,12 @@ app.get('/employee', (req, res) => {
             return location.href = '/';
           }
           const data = await res.json();
+
+          currentTargetUserObj = data.userInfo;
+          if (currentTargetUserObj) {
+            applyUserTheme(currentTargetUserObj.avatarUrl, currentTargetUserObj.bgUrl);
+          }
           
-          // 💡 更新页面顶部总用时为几小时几分钟
           document.getElementById('totalWork').innerText = formatDuration(data.totalWorkHours);
           document.getElementById('totalOt').innerText = formatDuration(data.totalOtHours);
 
@@ -839,22 +941,55 @@ app.get('/employee', (req, res) => {
             const status = document.getElementById('clockStatus');
             if (!data.todayRecord || !data.todayRecord.clockIn) {
               btn.innerText = "上班打卡 (IN)";
-              btn.className = "w-full h-24 text-xl font-bold rounded-xl text-white bg-green-500 hover:bg-green-600 transition";
+              btn.className = "w-full h-24 text-xl font-bold rounded-xl text-white bg-green-500 hover:bg-green-600 transition shadow-md";
               status.innerText = "状态：未打卡";
             } else if (data.todayRecord.clockIn && !data.todayRecord.clockOut) {
               btn.innerText = "下班打卡 (OUT)";
-              btn.className = "w-full h-24 text-xl font-bold rounded-xl text-white bg-red-500 hover:bg-red-600 transition";
+              btn.className = "w-full h-24 text-xl font-bold rounded-xl text-white bg-red-500 hover:bg-red-600 transition shadow-md";
               status.innerText = \`已签到：\${formatTo24HourTime(data.todayRecord.clockIn)}\`;
             } else {
               btn.innerText = "今日打卡完成";
               btn.disabled = true;
-              btn.className = "w-full h-24 text-xl font-bold rounded-xl text-white bg-gray-400 cursor-not-allowed";
+              btn.className = "w-full h-24 text-xl font-bold rounded-xl text-white bg-gray-400 cursor-not-allowed shadow-none";
               status.innerText = "明日跨天后可再次打卡";
             }
           }
 
           fullHistoryData = data.history || [];
           renderHistoryTable();
+        }
+
+        function openThemeModal() {
+          const avatarInput = document.getElementById('themeAvatarUrl');
+          const bgInput = document.getElementById('themeBgUrl');
+
+          if (currentTargetUserObj) {
+            avatarInput.value = currentTargetUserObj.avatarUrl && !currentTargetUserObj.avatarUrl.startsWith('data:image/svg+xml') ? currentTargetUserObj.avatarUrl : '';
+            bgInput.value = currentTargetUserObj.bgUrl || '';
+          }
+
+          document.getElementById('themeModal').classList.remove('hidden');
+        }
+
+        function closeThemeModal() {
+          document.getElementById('themeModal').classList.add('hidden');
+        }
+
+        async function saveThemeSettings() {
+          const avatarUrl = document.getElementById('themeAvatarUrl').value;
+          const bgUrl = document.getElementById('themeBgUrl').value;
+
+          const res = await fetch('/api/user/update-theme', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ avatarUrl, bgUrl, targetUserId })
+          });
+          const data = await res.json();
+          alert(data.message);
+          if (res.ok) {
+            closeThemeModal();
+            loadAttendanceData();
+          }
         }
 
         function isWithinLast7Days(dateStr) {
