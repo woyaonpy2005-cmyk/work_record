@@ -501,12 +501,12 @@ app.get('/employee', (req, res) => {
       <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/flatpickr/dist/flatpickr.min.css">
       <script src="https://cdn.jsdelivr.net/npm/flatpickr"></script>
       <style>
-        /* 🎨 优化后的 CSS 自动居中与等比自适应样式 */
+        /* 🖼️ CSS 完整包含照片模式 (无裁切、完全缩放展示) */
         .header-console-bg {
-          background-color: #2563eb;
-          background-size: cover;          /* 保证图片铺满且不拉伸变形 */
-          background-position: center;      /* 自动将图片的重点部分居中对齐 */
-          background-repeat: no-repeat;
+          background-color: #1e293b;        /* 优雅的暗浅灰底色，用于填充照片两边余白 */
+          background-size: contain;         /* 100% 完整显示照片，绝不裁剪任何边缘 */
+          background-position: center;      /* 保持照片在容器中完全居中 */
+          background-repeat: no-repeat;     /* 不重复平铺照片 */
           transition: background 0.3s ease;
         }
 
@@ -526,15 +526,16 @@ app.get('/employee', (req, res) => {
         </div>
 
         <!-- 控制台头部卡片 -->
-        <div id="headerCard" class="header-console-bg relative p-6 md:p-8 rounded-2xl shadow-lg border border-blue-400 overflow-hidden text-white transition-all duration-300">
-          <div class="absolute inset-0 bg-black/35 z-0 backdrop-blur-[1px]"></div>
+        <div id="headerCard" class="header-console-bg relative p-6 md:p-8 rounded-2xl shadow-lg border border-gray-700 overflow-hidden text-white transition-all duration-300 min-h-[220px] flex flex-col justify-between">
+          <!-- 文字防护深色浮层 (含遮罩与磨砂，保证文字清晰度) -->
+          <div class="absolute inset-0 bg-black/40 z-0 backdrop-blur-[0.5px]"></div>
 
           <div class="relative z-10 flex flex-col md:flex-row justify-between items-start md:items-center gap-6">
             <div class="flex items-center space-x-4">
               <img id="userAvatar" src="${DEFAULT_AVATAR}" alt="头像" class="w-16 h-16 rounded-full border-2 border-white/80 object-cover bg-white shadow-md flex-shrink-0">
               <div>
-                <h1 class="text-2xl md:text-3xl font-extrabold tracking-wide drop-shadow">打卡控制台</h1>
-                <p class="text-blue-100 text-sm mt-1">当前查看员工 ID: <span id="dispUserId" class="font-bold underline text-white">---</span></p>
+                <h1 class="text-2xl md:text-3xl font-extrabold tracking-wide drop-shadow-md">打卡控制台</h1>
+                <p class="text-gray-200 text-sm mt-1">当前查看员工 ID: <span id="dispUserId" class="font-bold underline text-white">---</span></p>
               </div>
             </div>
 
@@ -548,10 +549,10 @@ app.get('/employee', (req, res) => {
           </div>
 
           <!-- 修改头像与背景按钮 -->
-          <div id="themeChangeBtnBox" class="relative z-10 flex justify-end mt-6 no-print">
+          <div id="themeChangeBtnBox" class="relative z-10 flex justify-end mt-4 no-print">
             <button onclick="openThemeModal()" class="bg-white/20 hover:bg-white/30 text-white border border-white/40 backdrop-blur-md text-xs font-semibold px-3 py-1.5 rounded-lg shadow-sm flex items-center space-x-1.5 transition transform hover:scale-105">
               <span>🖼️</span>
-              <span>修改头像/背景 (智能适应)</span>
+              <span>更换图片 (完整显示不裁剪)</span>
             </button>
           </div>
         </div>
@@ -647,7 +648,7 @@ app.get('/employee', (req, res) => {
       <div id="themeModal" class="fixed inset-0 bg-black/60 hidden flex items-center justify-center p-4 z-50 no-print">
         <div class="bg-white rounded-2xl shadow-2xl p-6 w-full max-w-md space-y-5 text-gray-800">
           <div class="flex justify-between items-center border-b pb-3">
-            <h3 class="text-lg font-bold">个性化修改 (自动适应全屏)</h3>
+            <h3 class="text-lg font-bold">个性化设置 (完整图片显示)</h3>
             <button onclick="closeThemeModal()" class="text-gray-400 hover:text-gray-600 font-bold">✕</button>
           </div>
           
@@ -664,17 +665,17 @@ app.get('/employee', (req, res) => {
           </div>
 
           <div>
-            <label class="block text-xs font-semibold text-gray-600 mb-1">更换背景照片 (已启用居中裁剪与缩放)</label>
+            <label class="block text-xs font-semibold text-gray-600 mb-1">更换背景照片 (100% 完整显示无截断)</label>
             <div class="space-y-2">
-              <div id="previewBgBox" class="w-full h-24 rounded-lg border bg-blue-600 bg-cover bg-center flex items-center justify-center text-xs text-white/90 shadow-inner relative overflow-hidden">
-                <span class="z-10 bg-black/40 px-3 py-1 rounded-full backdrop-blur-sm">预览自适应效果</span>
+              <div id="previewBgBox" class="w-full h-32 rounded-lg border bg-slate-800 bg-contain bg-center bg-no-repeat flex items-center justify-center text-xs text-white/90 shadow-inner relative overflow-hidden">
+                <span class="z-10 bg-black/40 px-3 py-1 rounded-full backdrop-blur-sm">完整原图预览</span>
               </div>
               <div class="flex items-center justify-between">
                 <label class="cursor-pointer bg-gray-100 hover:bg-gray-200 border text-gray-700 text-xs font-semibold px-3 py-2 rounded-lg transition">
                   <span>📁 选择照片</span>
                   <input type="file" id="bgFileInput" accept="image/*" onchange="handleFileSelect(event, 'bg')" class="hidden">
                 </label>
-                <button onclick="resetBg()" class="text-xs text-red-500 hover:underline">还原蓝色背景</button>
+                <button onclick="resetBg()" class="text-xs text-red-500 hover:underline">还原黑灰背景</button>
               </div>
             </div>
           </div>
@@ -818,7 +819,7 @@ app.get('/employee', (req, res) => {
             headerCard.style.backgroundImage = \`url('\${bgUrl}')\`;
           } else {
             headerCard.style.backgroundImage = 'none';
-            headerCard.style.backgroundColor = '#2563eb';
+            headerCard.style.backgroundColor = '#1e293b';
           }
         }
 
