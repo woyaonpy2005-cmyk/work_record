@@ -500,13 +500,15 @@ app.get('/employee', (req, res) => {
       <script src="https://cdn.tailwindcss.com"></script>
       <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/flatpickr/dist/flatpickr.min.css">
       <script src="https://cdn.jsdelivr.net/npm/flatpickr"></script>
+      <!-- 引入照片自由裁剪组件 Cropper.js -->
+      <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/cropperjs/1.5.13/cropper.min.css"/>
+      <script src="https://cdnjs.cloudflare.com/ajax/libs/cropperjs/1.5.13/cropper.min.js"></script>
       <style>
-        /* 🖼️ CSS 完整包含照片模式 (无裁切、完全缩放展示) */
         .header-console-bg {
-          background-color: #1e293b;        /* 优雅的暗浅灰底色，用于填充照片两边余白 */
-          background-size: contain;         /* 100% 完整显示照片，绝不裁剪任何边缘 */
-          background-position: center;      /* 保持照片在容器中完全居中 */
-          background-repeat: no-repeat;     /* 不重复平铺照片 */
+          background-color: #1e293b;
+          background-size: cover;          /* 使用裁剪后的优质区域铺满整个容器 */
+          background-position: center;
+          background-repeat: no-repeat;
           transition: background 0.3s ease;
         }
 
@@ -527,7 +529,6 @@ app.get('/employee', (req, res) => {
 
         <!-- 控制台头部卡片 -->
         <div id="headerCard" class="header-console-bg relative p-6 md:p-8 rounded-2xl shadow-lg border border-gray-700 overflow-hidden text-white transition-all duration-300 min-h-[220px] flex flex-col justify-between">
-          <!-- 文字防护深色浮层 (含遮罩与磨砂，保证文字清晰度) -->
           <div class="absolute inset-0 bg-black/40 z-0 backdrop-blur-[0.5px]"></div>
 
           <div class="relative z-10 flex flex-col md:flex-row justify-between items-start md:items-center gap-6">
@@ -548,11 +549,11 @@ app.get('/employee', (req, res) => {
             </div>
           </div>
 
-          <!-- 修改头像与背景按钮 -->
+          <!-- 修改外观按钮 -->
           <div id="themeChangeBtnBox" class="relative z-10 flex justify-end mt-4 no-print">
             <button onclick="openThemeModal()" class="bg-white/20 hover:bg-white/30 text-white border border-white/40 backdrop-blur-md text-xs font-semibold px-3 py-1.5 rounded-lg shadow-sm flex items-center space-x-1.5 transition transform hover:scale-105">
               <span>🖼️</span>
-              <span>更换图片 (完整显示不裁剪)</span>
+              <span>自定义头像 & 背景 (可自主裁剪)</span>
             </button>
           </div>
         </div>
@@ -644,45 +645,66 @@ app.get('/employee', (req, res) => {
         </div>
       </div>
 
-      <!-- 图片上传与预览 Modal -->
+      <!-- 个性化主题 Modal -->
       <div id="themeModal" class="fixed inset-0 bg-black/60 hidden flex items-center justify-center p-4 z-50 no-print">
         <div class="bg-white rounded-2xl shadow-2xl p-6 w-full max-w-md space-y-5 text-gray-800">
           <div class="flex justify-between items-center border-b pb-3">
-            <h3 class="text-lg font-bold">个性化设置 (完整图片显示)</h3>
+            <h3 class="text-lg font-bold">个性化外观设置</h3>
             <button onclick="closeThemeModal()" class="text-gray-400 hover:text-gray-600 font-bold">✕</button>
           </div>
           
           <div>
-            <label class="block text-xs font-semibold text-gray-600 mb-1">更换头像</label>
+            <label class="block text-xs font-semibold text-gray-600 mb-2">1. 更换个人头像</label>
             <div class="flex items-center space-x-3">
               <img id="previewAvatar" src="${DEFAULT_AVATAR}" class="w-12 h-12 rounded-full border object-cover bg-gray-50">
               <label class="cursor-pointer bg-gray-100 hover:bg-gray-200 border text-gray-700 text-xs font-semibold px-3 py-2 rounded-lg transition">
-                <span>📁 从手机/相册选择</span>
-                <input type="file" id="avatarFileInput" accept="image/*" onchange="handleFileSelect(event, 'avatar')" class="hidden">
+                <span>📷 上传并裁剪头像</span>
+                <input type="file" accept="image/*" onchange="openCropModal(event, 'avatar')" class="hidden">
               </label>
               <button onclick="resetAvatar()" class="text-xs text-red-500 hover:underline">还原默认</button>
             </div>
           </div>
 
           <div>
-            <label class="block text-xs font-semibold text-gray-600 mb-1">更换背景照片 (100% 完整显示无截断)</label>
+            <label class="block text-xs font-semibold text-gray-600 mb-2">2. 更换卡片背景图 (精准裁剪)</label>
             <div class="space-y-2">
-              <div id="previewBgBox" class="w-full h-32 rounded-lg border bg-slate-800 bg-contain bg-center bg-no-repeat flex items-center justify-center text-xs text-white/90 shadow-inner relative overflow-hidden">
-                <span class="z-10 bg-black/40 px-3 py-1 rounded-full backdrop-blur-sm">完整原图预览</span>
+              <div id="previewBgBox" class="w-full h-28 rounded-lg border bg-slate-800 bg-cover bg-center bg-no-repeat flex items-center justify-center text-xs text-white/90 shadow-inner">
+                <span class="bg-black/50 px-3 py-1 rounded-full backdrop-blur-sm">已生效背景效果</span>
               </div>
               <div class="flex items-center justify-between">
-                <label class="cursor-pointer bg-gray-100 hover:bg-gray-200 border text-gray-700 text-xs font-semibold px-3 py-2 rounded-lg transition">
-                  <span>📁 选择照片</span>
-                  <input type="file" id="bgFileInput" accept="image/*" onchange="handleFileSelect(event, 'bg')" class="hidden">
+                <label class="cursor-pointer bg-blue-50 hover:bg-blue-100 border border-blue-200 text-blue-700 text-xs font-semibold px-3 py-2 rounded-lg transition">
+                  <span>🖼️ 上传并裁剪背景照片</span>
+                  <input type="file" accept="image/*" onchange="openCropModal(event, 'bg')" class="hidden">
                 </label>
-                <button onclick="resetBg()" class="text-xs text-red-500 hover:underline">还原黑灰背景</button>
+                <button onclick="resetBg()" class="text-xs text-red-500 hover:underline">恢复默认底色</button>
               </div>
             </div>
           </div>
 
           <div class="flex justify-end space-x-2 pt-2 border-t">
             <button onclick="closeThemeModal()" class="px-4 py-2 border rounded-lg text-gray-600 hover:bg-gray-100 text-sm">取消</button>
-            <button onclick="saveThemeSettings()" class="px-5 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 font-semibold text-sm transition">保存配置</button>
+            <button onclick="saveThemeSettings()" class="px-5 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 font-semibold text-sm transition">保存生效</button>
+          </div>
+        </div>
+      </div>
+
+      <!-- 图片自由裁剪 Modal -->
+      <div id="cropModal" class="fixed inset-0 bg-black/80 hidden flex items-center justify-center p-4 z-[60] no-print">
+        <div class="bg-white rounded-2xl shadow-2xl p-6 w-full max-w-lg space-y-4">
+          <div class="flex justify-between items-center border-b pb-2">
+            <h3 id="cropTitle" class="text-base font-bold text-gray-800">自由选择裁切区域</h3>
+            <button onclick="closeCropModal()" class="text-gray-400 hover:text-gray-600 font-bold">✕</button>
+          </div>
+          
+          <div class="w-full h-[320px] bg-black/90 rounded-lg overflow-hidden flex items-center justify-center">
+            <img id="cropImage" class="max-h-full max-w-full">
+          </div>
+
+          <p class="text-xs text-gray-500 text-center">💡 提示：拖动或缩放方框，框选出你想展示的照片最佳视角</p>
+
+          <div class="flex justify-end space-x-2 pt-2 border-t">
+            <button onclick="closeCropModal()" class="px-4 py-2 border rounded-lg text-gray-600 text-sm hover:bg-gray-100">放弃</button>
+            <button onclick="confirmCrop()" class="px-5 py-2 bg-green-600 text-white rounded-lg font-semibold text-sm hover:bg-green-700 shadow">确认裁剪</button>
           </div>
         </div>
       </div>
@@ -701,6 +723,9 @@ app.get('/employee', (req, res) => {
 
         let pendingAvatarBase64 = null;
         let pendingBgBase64 = null;
+
+        let cropper = null;
+        let currentCropType = 'bg';
 
         const weekDays = ['星期日', '星期一', '星期二', '星期三', '星期四', '星期五', '星期六'];
 
@@ -863,53 +888,69 @@ app.get('/employee', (req, res) => {
           renderHistoryTable();
         }
 
-        function compressAndReadImage(file, maxWidth, maxHeight, callback) {
-          const reader = new FileReader();
-          reader.onload = function(e) {
-            const img = new Image();
-            img.onload = function() {
-              const canvas = document.createElement('canvas');
-              let width = img.width;
-              let height = img.height;
-
-              if (width > maxWidth) {
-                height = Math.round((height * maxWidth) / width);
-                width = maxWidth;
-              }
-              if (height > maxHeight) {
-                width = Math.round((width * maxHeight) / height);
-                height = maxHeight;
-              }
-
-              canvas.width = width;
-              canvas.height = height;
-              const ctx = canvas.getContext('2d');
-              ctx.drawImage(img, 0, 0, width, height);
-
-              const compressedBase64 = canvas.toDataURL('image/jpeg', 0.85);
-              callback(compressedBase64);
-            };
-            img.src = e.target.result;
-          };
-          reader.readAsDataURL(file);
-        }
-
-        function handleFileSelect(event, type) {
+        // ==================== 图片裁剪算法 & 交互逻辑 ====================
+        function openCropModal(event, type) {
           const file = event.target.files[0];
           if (!file) return;
 
-          if (type === 'avatar') {
-            compressAndReadImage(file, 300, 300, (base64) => {
-              pendingAvatarBase64 = base64;
-              document.getElementById('previewAvatar').src = base64;
+          currentCropType = type;
+          const reader = new FileReader();
+          reader.onload = function(e) {
+            const cropImage = document.getElementById('cropImage');
+            cropImage.src = e.target.result;
+
+            document.getElementById('cropTitle').innerText = type === 'avatar' ? '裁剪个人头像 (正方形)' : '裁剪头部背景卡片 (横版宽屏比例)';
+            document.getElementById('cropModal').classList.remove('hidden');
+
+            if (cropper) cropper.destroy();
+
+            // 头像比例 1:1，背景比例 16:7（完美契合顶部高卡片）
+            const aspectRatio = type === 'avatar' ? 1 : 16 / 7;
+
+            cropper = new Cropper(cropImage, {
+              aspectRatio: aspectRatio,
+              viewMode: 1,
+              background: false,
+              autoCropArea: 0.9
             });
-          } else if (type === 'bg') {
-            compressAndReadImage(file, 1200, 800, (base64) => {
-              pendingBgBase64 = base64;
-              const previewBgBox = document.getElementById('previewBgBox');
-              previewBgBox.style.backgroundImage = \`url('\${base64}')\`;
-            });
+          };
+          reader.readAsDataURL(file);
+          event.target.value = ''; 
+        }
+
+        function closeCropModal() {
+          if (cropper) {
+            cropper.destroy();
+            cropper = null;
           }
+          document.getElementById('cropModal').classList.add('hidden');
+        }
+
+        function confirmCrop() {
+          if (!cropper) return;
+
+          const width = currentCropType === 'avatar' ? 300 : 1200;
+          const height = currentCropType === 'avatar' ? 300 : 525;
+
+          const canvas = cropper.getCroppedCanvas({
+            width: width,
+            height: height,
+            imageSmoothingEnabled: true,
+            imageSmoothingQuality: 'high'
+          });
+
+          const croppedBase64 = canvas.toDataURL('image/jpeg', 0.85);
+
+          if (currentCropType === 'avatar') {
+            pendingAvatarBase64 = croppedBase64;
+            document.getElementById('previewAvatar').src = croppedBase64;
+          } else {
+            pendingBgBase64 = croppedBase64;
+            const previewBgBox = document.getElementById('previewBgBox');
+            previewBgBox.style.backgroundImage = \`url('\${croppedBase64}')\`;
+          }
+
+          closeCropModal();
         }
 
         function resetAvatar() {
