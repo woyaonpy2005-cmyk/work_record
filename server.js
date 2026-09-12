@@ -26,7 +26,6 @@ app.use(session({
 }));
 
 // ==================== 1. 数据库模型定义 ====================
-// 💡 默认黑白头像 SVG Data URI
 const DEFAULT_AVATAR = "data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='%236B7280'><path d='M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm0 3c1.66 0 3 1.34 3 3s-1.34 3-3 3-3-1.34-3-3 1.34-3 3-3zm0 14.2c-2.5 0-4.71-1.28-6-3.22.03-1.99 4-3.08 6-3.08 1.99 0 5.97 1.09 6 3.08-1.29 1.94-3.5 3.22-6 3.22z'/></svg>";
 
 const userSchema = new mongoose.Schema({
@@ -34,8 +33,8 @@ const userSchema = new mongoose.Schema({
   password: { type: String, required: true },
   name: { type: String, required: true },
   role: { type: String, enum: ['admin', 'employee'], default: 'employee' },
-  avatarUrl: { type: String, default: DEFAULT_AVATAR }, // 支持 Base64 图片数据
-  bgUrl: { type: String, default: '' }                  // 支持 Base64 图片数据
+  avatarUrl: { type: String, default: DEFAULT_AVATAR },
+  bgUrl: { type: String, default: '' }
 });
 const User = mongoose.model('User', userSchema);
 
@@ -76,7 +75,7 @@ const getTodayStr = () => {
   return d.toLocaleDateString('en-CA', { timeZone: TIMEZONE_NAME });
 };
 
-// 工时计算逻辑
+// 工时计算逻辑（自动扣除1小时休息时间）
 const calculateHours = (inTime, outTime) => {
   if (!inTime || !outTime) return { workHours: 0, otHours: 0 };
   const diffMs = new Date(outTime) - new Date(inTime);
@@ -132,25 +131,25 @@ app.post('/api/logout', (req, res) => {
   res.json({ success: true });
 });
 
-// 💡 修改个人或指定员工的头像与背景 API (支持图库 Base64)
+// 修改个人外观 API (支持相册图库 Base64)
 app.post('/api/user/update-theme', async (req, res) => {
   if (!req.session.user) return res.status(401).json({ message: '未登录或登录已超时' });
-  const { avatarUrl, bgUrl, targetUserId } = req.body;
+  const { avatarUrl, bgUrl } = req.body;
 
-  // 如果是 Admin 且传入了 targetUserId，则更新指定员工，否则更新自己
-  const updateId = (req.session.user.role === 'admin' && targetUserId) ? targetUserId : req.session.user.userId;
-
-  const user = await User.findOne({ userId: updateId });
+  const user = await User.findOne({ userId: req.session.user.userId });
   if (!user) return res.status(404).json({ message: '找不到该用户' });
 
   if (avatarUrl !== undefined) user.avatarUrl = avatarUrl.trim() || DEFAULT_AVATAR;
   if (bgUrl !== undefined) user.bgUrl = bgUrl.trim();
 
   await user.save();
-  res.json({ message: '外观设置（头像/背景）保存成功！', avatarUrl: user.avatarUrl, bgUrl: user.bgUrl });
+  req.session.user.avatarUrl = user.avatarUrl;
+  req.session.user.bgUrl = user.bgUrl;
+
+  res.json({ message: '外观设置保存成功！', avatarUrl: user.avatarUrl, bgUrl: user.bgUrl });
 });
 
-// Admin API：添加员工
+// 还原最初的 Admin API：添加员工
 app.post('/api/admin/add-employee', async (req, res) => {
   if (!req.session.user || req.session.user.role !== 'admin') {
     return res.status(403).json({ message: '无权限操作' });
@@ -166,64 +165,16 @@ app.post('/api/admin/add-employee', async (req, res) => {
   res.json({ message: '员工添加成功' });
 });
 
-// Admin API：获取所有员工列表
+// 还原最初的 Admin API：获取所有员工列表
 app.get('/api/admin/employees', async (req, res) => {
   if (!req.session.user || req.session.user.role !== 'admin') {
     return res.status(403).json({ message: '无权限操作' });
   }
-  const employees = await User.find({ role: 'employee' }, 'userId name avatarUrl bgUrl');
+  const employees = await User.find({ role: 'employee' }, 'userId name');
   res.json(employees);
 });
 
-// Admin API：修改员工基本资料 (ID / 姓名 / 密码)
-app.post('/api/admin/update-employee', async (req, res) => {
-  if (!req.session.user || req.session.user.role !== 'admin') {
-    return res.status(403).json({ message: '无权限操作' });
-  }
-  const { originalUserId, newUserId, newName, newPassword } = req.body;
-  if (!originalUserId || !newUserId || !newName) {
-    return res.status(400).json({ message: '请填写完整的员工信息' });
-  }
-
-  if (originalUserId !== newUserId) {
-    const exists = await User.findOne({ userId: newUserId });
-    if (exists) return res.status(400).json({ message: '新员工ID已被其他账号占用' });
-  }
-
-  const user = await User.findOne({ userId: originalUserId });
-  if (!user) return res.status(404).json({ message: '找不到该员工' });
-
-  user.userId = newUserId;
-  user.name = newName;
-  if (newPassword && newPassword.trim() !== '') {
-    user.password = await bcrypt.hash(newPassword, 10);
-  }
-  await user.save();
-
-  if (originalUserId !== newUserId) {
-    await Attendance.updateMany({ userId: originalUserId }, { userId: newUserId });
-  }
-
-  res.json({ message: '员工信息修改成功！' });
-});
-
-// Admin API：办理离职/删除员工
-app.delete('/api/admin/delete-employee', async (req, res) => {
-  if (!req.session.user || req.session.user.role !== 'admin') {
-    return res.status(403).json({ message: '无权限操作' });
-  }
-  const { targetUserId } = req.body;
-  if (!targetUserId) return res.status(400).json({ message: '缺少参数：员工ID' });
-
-  const deletedUser = await User.findOneAndDelete({ userId: targetUserId, role: 'employee' });
-  if (!deletedUser) return res.status(404).json({ message: '未找到该员工账号' });
-
-  await Attendance.deleteMany({ userId: targetUserId });
-
-  res.json({ message: `员工 [${targetUserId}] 离职/删除成功，相关打卡记录已清理。` });
-});
-
-// 获取指定员工考勤数据与个人资料
+// 获取考勤数据 API
 app.get('/api/attendance/:targetUserId', async (req, res) => {
   if (!req.session.user) return res.status(401).json({ message: '未登录或登录已超时' });
   
@@ -280,7 +231,7 @@ app.post('/api/attendance/toggle', async (req, res) => {
   }
 });
 
-// 手动添加/修改记录 API (管理员与员工均可调用)
+// 手动补录/修改 API
 app.post('/api/attendance/manual', async (req, res) => {
   const user = req.session.user;
   if (!user) return res.status(401).json({ message: '未登录或登录已超时' });
@@ -288,7 +239,6 @@ app.post('/api/attendance/manual', async (req, res) => {
   let { date, clockIn, clockOut, targetUserId, remark } = req.body;
   if (!date || !clockIn || !clockOut) return res.status(400).json({ message: '请选择完整的日期与时间' });
 
-  // 如果是 Admin 且指定了目标员工，则操作目标员工，否则更新自己
   const updateUserId = (user.role === 'admin' && targetUserId) ? targetUserId : user.userId;
 
   const inDateTime = new Date(`${date}T${clockIn}:00${TIMEZONE_OFFSET}`);
@@ -407,7 +357,7 @@ app.get('/', (req, res) => {
   `);
 });
 
-// 页面 2：Admin 控制台
+// 页面 2：还原回最初版本的 Admin 控制台页面
 app.get('/admin', (req, res) => {
   res.send(`
     <!DOCTYPE html>
@@ -417,44 +367,17 @@ app.get('/admin', (req, res) => {
       <meta name="viewport" content="width=device-width, initial-scale=1.0">
       <title>管理员控制台</title>
       <script src="https://cdn.tailwindcss.com"></script>
-      <style>
-        .admin-header-bg {
-          background-color: #1e293b;
-          background-size: cover;
-          background-position: center;
-        }
-      </style>
     </head>
     <body class="bg-gray-100 min-h-screen p-4 md:p-8">
-      <div class="max-w-5xl mx-auto space-y-6 md:space-y-8">
-        
-        <!-- 管理员个人顶部 Card，支持更改自己的头像/背景 -->
-        <div id="adminHeaderCard" class="admin-header-bg relative p-6 md:p-8 rounded-2xl shadow-lg border border-slate-700 overflow-hidden text-white transition-all duration-300">
-          <div class="absolute inset-0 bg-black/40 z-0"></div>
-
-          <div class="relative z-10 flex flex-col md:flex-row justify-between items-start md:items-center gap-6">
-            <div class="flex items-center space-x-4">
-              <img id="adminAvatar" src="${DEFAULT_AVATAR}" class="w-16 h-16 rounded-full border-2 border-white/80 object-cover bg-white shadow-md flex-shrink-0">
-              <div>
-                <h1 class="text-2xl md:text-3xl font-extrabold tracking-wide drop-shadow">管理员控制台</h1>
-                <p class="text-slate-300 text-sm mt-1">当前 Admin 账号: <span id="adminUserId" class="font-bold underline text-white">admin123</span></p>
-              </div>
-            </div>
-
-            <div class="space-x-2 flex w-full md:w-auto justify-end">
-              <button onclick="openThemeModal()" class="bg-white/20 hover:bg-white/30 text-white border border-white/30 backdrop-blur-md px-3 py-2 rounded-lg text-xs font-medium transition shadow-sm flex items-center gap-1">
-                🖼️ 修改 Admin 头像/背景
-              </button>
-              <button onclick="logout()" class="bg-red-500 hover:bg-red-600 text-white px-4 py-2 rounded-lg text-xs font-medium transition shadow-sm">
-                退出登录
-              </button>
-            </div>
-          </div>
+      <div class="max-w-4xl mx-auto space-y-6">
+        <div class="flex justify-between items-center bg-white p-4 rounded-xl shadow-sm">
+          <h1 class="text-2xl font-bold text-gray-800">管理员控制台</h1>
+          <button onclick="logout()" class="bg-red-500 text-white px-4 py-2 rounded-lg hover:bg-red-600 text-sm font-semibold transition">退出登录</button>
         </div>
 
-        <div class="bg-white p-4 md:p-6 rounded-xl shadow-sm border border-gray-200">
-          <h2 class="text-xl font-bold mb-4">➕ 添加新员工</h2>
-          <div class="grid grid-cols-1 sm:grid-cols-3 gap-4">
+        <div class="bg-white p-6 rounded-xl shadow-sm border border-gray-200">
+          <h2 class="text-xl font-bold mb-4">添加新员工</h2>
+          <div class="grid grid-cols-1 md:grid-cols-3 gap-4">
             <input type="text" id="newId" placeholder="员工 ID (例如: emp01)" class="border p-2 rounded-lg outline-none focus:ring-2 focus:ring-green-500">
             <input type="text" id="newName" placeholder="员工姓名" class="border p-2 rounded-lg outline-none focus:ring-2 focus:ring-green-500">
             <div class="relative">
@@ -464,97 +387,16 @@ app.get('/admin', (req, res) => {
               </button>
             </div>
           </div>
-          <button onclick="addEmployee()" class="mt-4 w-full sm:w-auto bg-green-600 text-white px-6 py-2 rounded-lg font-semibold hover:bg-green-700 transition">添加员工</button>
+          <button onclick="addEmployee()" class="mt-4 bg-green-600 text-white px-6 py-2 rounded-lg font-semibold hover:bg-green-700 transition">添加员工</button>
         </div>
 
-        <div class="bg-white p-4 md:p-6 rounded-xl shadow-sm border border-gray-200">
-          <h2 class="text-xl font-bold mb-4">👥 员工列表与权限管理</h2>
-          <div id="employeeList" class="grid grid-cols-1 sm:grid-cols-2 gap-4"></div>
-        </div>
-      </div>
-
-      <!-- 修改员工资料 Modal -->
-      <div id="editModal" class="fixed inset-0 bg-black/50 hidden flex items-center justify-center p-4 z-50">
-        <div class="bg-white rounded-xl shadow-xl p-6 w-full max-w-md space-y-4">
-          <div class="flex justify-between items-center border-b pb-3">
-            <h3 class="text-lg font-bold">修改员工资料</h3>
-            <button onclick="closeEditModal()" class="text-gray-400 hover:text-gray-600 font-bold">✕</button>
-          </div>
-          <input type="hidden" id="editOriginalUserId">
-          <div>
-            <label class="block text-xs text-gray-500 mb-1">员工 ID</label>
-            <input type="text" id="editUserId" class="w-full border p-2 rounded-lg outline-none focus:ring-2 focus:ring-blue-500">
-          </div>
-          <div>
-            <label class="block text-xs text-gray-500 mb-1">员工姓名</label>
-            <input type="text" id="editName" class="w-full border p-2 rounded-lg outline-none focus:ring-2 focus:ring-blue-500">
-          </div>
-          <div>
-            <label class="block text-xs text-gray-500 mb-1">新密码 (如留空则维持原密码)</label>
-            <div class="relative">
-              <input type="password" id="editPass" placeholder="重置新密码(可选)" class="w-full border p-2 pr-10 rounded-lg outline-none focus:ring-2 focus:ring-blue-500">
-              <button type="button" onclick="togglePasswordVisibility('editPass', 'eyeEdit')" class="absolute inset-y-0 right-0 pr-3 flex items-center text-gray-500">
-                <span id="eyeEdit">👁️</span>
-              </button>
-            </div>
-          </div>
-          <div class="flex justify-end space-x-2 pt-2">
-            <button onclick="closeEditModal()" class="px-4 py-2 border rounded-lg text-gray-600 hover:bg-gray-100">取消</button>
-            <button onclick="submitEditEmployee()" class="px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 font-semibold">保存更新</button>
-          </div>
-        </div>
-      </div>
-
-      <!-- 修改 Admin 个人外观 Modal -->
-      <div id="themeModal" class="fixed inset-0 bg-black/60 hidden flex items-center justify-center p-4 z-50">
-        <div class="bg-white rounded-2xl shadow-2xl p-6 w-full max-w-md space-y-5 text-gray-800">
-          <div class="flex justify-between items-center border-b pb-3">
-            <h3 class="text-lg font-bold">更换 Admin 头像与背景</h3>
-            <button onclick="closeThemeModal()" class="text-gray-400 hover:text-gray-600 font-bold">✕</button>
-          </div>
-          
-          <div>
-            <label class="block text-xs font-semibold text-gray-600 mb-1">更换 Admin 头像</label>
-            <div class="flex items-center space-x-3">
-              <img id="previewAvatar" src="${DEFAULT_AVATAR}" class="w-12 h-12 rounded-full border object-cover bg-gray-50">
-              <label class="cursor-pointer bg-gray-100 hover:bg-gray-200 border text-gray-700 text-xs font-semibold px-3 py-2 rounded-lg transition">
-                <span>📁 从图库选择</span>
-                <input type="file" id="avatarFileInput" accept="image/*" onchange="handleFileSelect(event, 'avatar')" class="hidden">
-              </label>
-              <button onclick="resetAvatar()" class="text-xs text-red-500 hover:underline">还原默认</button>
-            </div>
-          </div>
-
-          <div>
-            <label class="block text-xs font-semibold text-gray-600 mb-1">更换 Admin 控制台背景</label>
-            <div class="space-y-2">
-              <div id="previewBgBox" class="w-full h-20 rounded-lg border bg-slate-800 bg-cover bg-center flex items-center justify-center text-xs text-white/70">
-                默认深色背景
-              </div>
-              <div class="flex items-center justify-between">
-                <label class="cursor-pointer bg-gray-100 hover:bg-gray-200 border text-gray-700 text-xs font-semibold px-3 py-2 rounded-lg transition">
-                  <span>📁 从图库选择照片</span>
-                  <input type="file" id="bgFileInput" accept="image/*" onchange="handleFileSelect(event, 'bg')" class="hidden">
-                </label>
-                <button onclick="resetBg()" class="text-xs text-red-500 hover:underline">还原默认</button>
-              </div>
-            </div>
-          </div>
-
-          <div class="flex justify-end space-x-2 pt-2 border-t">
-            <button onclick="closeThemeModal()" class="px-4 py-2 border rounded-lg text-gray-600 hover:bg-gray-100 text-sm">取消</button>
-            <button onclick="saveAdminTheme()" class="px-5 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 font-semibold text-sm transition">保存生效</button>
-          </div>
+        <div class="bg-white p-6 rounded-xl shadow-sm border border-gray-200">
+          <h2 class="text-xl font-bold mb-4">员工列表</h2>
+          <div id="employeeList" class="grid grid-cols-1 md:grid-cols-2 gap-4"></div>
         </div>
       </div>
 
       <script>
-        let cachedEmployees = [];
-        let currentAdminObj = null;
-
-        let pendingAvatarBase64 = null;
-        let pendingBgBase64 = null;
-
         (function setupAutoLogout() {
           let timer;
           const FIVE_MINUTES = 5 * 60 * 1000;
@@ -589,26 +431,10 @@ app.get('/admin', (req, res) => {
         async function init() {
           const res = await fetch('/api/me');
           if (!res.ok) return location.href = '/';
-          currentAdminObj = await res.json();
-          if (currentAdminObj.role !== 'admin') return location.href = '/employee';
-
-          document.getElementById('adminUserId').innerText = currentAdminObj.userId;
-          applyAdminTheme(currentAdminObj.avatarUrl, currentAdminObj.bgUrl);
+          const user = await res.json();
+          if (user.role !== 'admin') return location.href = '/employee';
 
           loadEmployees();
-        }
-
-        function applyAdminTheme(avatarUrl, bgUrl) {
-          const avatarImg = document.getElementById('adminAvatar');
-          if (avatarImg) avatarImg.src = avatarUrl || "${DEFAULT_AVATAR}";
-
-          const headerCard = document.getElementById('adminHeaderCard');
-          if (bgUrl && bgUrl.trim() !== '') {
-            headerCard.style.backgroundImage = \`url('\${bgUrl}')\`;
-          } else {
-            headerCard.style.backgroundImage = 'none';
-            headerCard.style.backgroundColor = '#1e293b';
-          }
         }
 
         async function loadEmployees() {
@@ -617,131 +443,23 @@ app.get('/admin', (req, res) => {
             alert('登录已超时，请重新登录');
             return location.href = '/';
           }
-          cachedEmployees = await res.json();
+          const employees = await res.json();
           
           const container = document.getElementById('employeeList');
-          if (cachedEmployees.length === 0) {
-            container.innerHTML = '<div class="text-gray-400 col-span-2 text-center py-4">暂无员工账号</div>';
+          if (employees.length === 0) {
+            container.innerHTML = '<div class="text-gray-400">暂无员工账号</div>';
             return;
           }
 
-          container.innerHTML = cachedEmployees.map(emp => \`
-            <div class="p-4 border rounded-xl flex flex-col justify-between bg-gray-50 shadow-sm hover:shadow transition">
-              <div class="flex items-center space-x-3">
-                <img src="\${emp.avatarUrl || '${DEFAULT_AVATAR}'}" class="w-12 h-12 rounded-full border border-gray-300 object-cover bg-white">
-                <div>
-                  <div class="font-bold text-lg text-blue-600">\${emp.userId}</div>
-                  <div class="text-gray-700 font-medium">\${emp.name}</div>
-                </div>
+          container.innerHTML = employees.map(emp => \`
+            <div class="p-4 border rounded-xl flex justify-between items-center bg-gray-50">
+              <div>
+                <div class="font-bold text-lg text-blue-600">\${emp.userId}</div>
+                <div class="text-gray-600 text-sm">\${emp.name}</div>
               </div>
-              <div class="mt-4 pt-3 border-t flex flex-wrap gap-2 text-xs">
-                <button onclick="viewEmployee('\${emp.userId}')" class="bg-blue-100 text-blue-700 px-3 py-1.5 rounded-lg font-semibold hover:bg-blue-200 transition">📅 查看考勤</button>
-                <button onclick="openEditModal('\${emp.userId}')" class="bg-amber-100 text-amber-800 px-3 py-1.5 rounded-lg font-semibold hover:bg-amber-200 transition">✏️ 修改资料</button>
-                <button onclick="deleteEmployee('\${emp.userId}', '\${emp.name}')" class="bg-red-100 text-red-700 px-3 py-1.5 rounded-lg font-semibold hover:bg-red-200 transition">🗑️ 离职/删除</button>
-              </div>
+              <button onclick="viewEmployee('\${emp.userId}')" class="bg-blue-600 text-white px-4 py-2 rounded-lg text-sm font-semibold hover:bg-blue-700 transition">查看考勤</button>
             </div>
           \`).join('');
-        }
-
-        function compressAndReadImage(file, maxWidth, maxHeight, callback) {
-          const reader = new FileReader();
-          reader.onload = function(e) {
-            const img = new Image();
-            img.onload = function() {
-              const canvas = document.createElement('canvas');
-              let width = img.width;
-              let height = img.height;
-
-              if (width > maxWidth) {
-                height = Math.round((height * maxWidth) / width);
-                width = maxWidth;
-              }
-              if (height > maxHeight) {
-                width = Math.round((width * maxHeight) / height);
-                height = maxHeight;
-              }
-
-              canvas.width = width;
-              canvas.height = height;
-              const ctx = canvas.getContext('2d');
-              ctx.drawImage(img, 0, 0, width, height);
-              const compressedBase64 = canvas.toDataURL('image/jpeg', 0.85);
-              callback(compressedBase64);
-            };
-            img.src = e.target.result;
-          };
-          reader.readAsDataURL(file);
-        }
-
-        function handleFileSelect(event, type) {
-          const file = event.target.files[0];
-          if (!file) return;
-
-          if (type === 'avatar') {
-            compressAndReadImage(file, 300, 300, (base64) => {
-              pendingAvatarBase64 = base64;
-              document.getElementById('previewAvatar').src = base64;
-            });
-          } else if (type === 'bg') {
-            compressAndReadImage(file, 1200, 800, (base64) => {
-              pendingBgBase64 = base64;
-              const previewBgBox = document.getElementById('previewBgBox');
-              previewBgBox.style.backgroundImage = \`url('\${base64}')\`;
-              previewBgBox.innerText = '';
-            });
-          }
-        }
-
-        function resetAvatar() {
-          pendingAvatarBase64 = "${DEFAULT_AVATAR}";
-          document.getElementById('previewAvatar').src = "${DEFAULT_AVATAR}";
-        }
-
-        function resetBg() {
-          pendingBgBase64 = "";
-          const previewBgBox = document.getElementById('previewBgBox');
-          previewBgBox.style.backgroundImage = 'none';
-          previewBgBox.innerText = '默认深色背景';
-        }
-
-        function openThemeModal() {
-          pendingAvatarBase64 = currentAdminObj ? currentAdminObj.avatarUrl : null;
-          pendingBgBase64 = currentAdminObj ? currentAdminObj.bgUrl : null;
-
-          document.getElementById('previewAvatar').src = pendingAvatarBase64 || "${DEFAULT_AVATAR}";
-          const previewBgBox = document.getElementById('previewBgBox');
-          if (pendingBgBase64 && pendingBgBase64.trim() !== '') {
-            previewBgBox.style.backgroundImage = \`url('\${pendingBgBase64}')\`;
-            previewBgBox.innerText = '';
-          } else {
-            previewBgBox.style.backgroundImage = 'none';
-            previewBgBox.innerText = '默认深色背景';
-          }
-          document.getElementById('themeModal').classList.remove('hidden');
-        }
-
-        function closeThemeModal() {
-          document.getElementById('themeModal').classList.add('hidden');
-        }
-
-        async function saveAdminTheme() {
-          const payload = {};
-          if (pendingAvatarBase64 !== null) payload.avatarUrl = pendingAvatarBase64;
-          if (pendingBgBase64 !== null) payload.bgUrl = pendingBgBase64;
-
-          const res = await fetch('/api/user/update-theme', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify(payload)
-          });
-          const data = await res.json();
-          alert(data.message);
-          if (res.ok) {
-            closeThemeModal();
-            currentAdminObj.avatarUrl = data.avatarUrl;
-            currentAdminObj.bgUrl = data.bgUrl;
-            applyAdminTheme(data.avatarUrl, data.bgUrl);
-          }
         }
 
         async function addEmployee() {
@@ -763,62 +481,6 @@ app.get('/admin', (req, res) => {
           }
         }
 
-        function openEditModal(userId) {
-          const emp = cachedEmployees.find(e => e.userId === userId);
-          if (!emp) return;
-
-          document.getElementById('editOriginalUserId').value = emp.userId;
-          document.getElementById('editUserId').value = emp.userId;
-          document.getElementById('editName').value = emp.name;
-          document.getElementById('editPass').value = '';
-
-          document.getElementById('editModal').classList.remove('hidden');
-        }
-
-        function closeEditModal() {
-          document.getElementById('editModal').classList.add('hidden');
-        }
-
-        async function submitEditEmployee() {
-          const originalUserId = document.getElementById('editOriginalUserId').value;
-          const newUserId = document.getElementById('editUserId').value.trim();
-          const newName = document.getElementById('editName').value.trim();
-          const newPassword = document.getElementById('editPass').value.trim();
-
-          if (!newUserId || !newName) {
-            return alert('员工 ID 和姓名不能为空！');
-          }
-
-          const res = await fetch('/api/admin/update-employee', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ originalUserId, newUserId, newName, newPassword })
-          });
-          const data = await res.json();
-          alert(data.message);
-          if (res.ok) {
-            closeEditModal();
-            loadEmployees();
-          }
-        }
-
-        async function deleteEmployee(userId, name) {
-          if (!confirm(\`确认要办理员工 [\${name} (\${userId})] 的离职/删除吗？\`)) {
-            return;
-          }
-
-          const res = await fetch('/api/admin/delete-employee', {
-            method: 'DELETE',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ targetUserId: userId })
-          });
-          const data = await res.json();
-          alert(data.message);
-          if (res.ok) {
-            loadEmployees();
-          }
-        }
-
         function viewEmployee(userId) {
           location.href = \`/employee?viewUserId=\${userId}\`;
         }
@@ -835,7 +497,7 @@ app.get('/admin', (req, res) => {
   `);
 });
 
-// 页面 3：打卡与管理控制台页
+// 页面 3：考勤控制台页
 app.get('/employee', (req, res) => {
   res.send(`
     <!DOCTYPE html>
@@ -887,7 +549,7 @@ app.get('/employee', (req, res) => {
             </div>
           </div>
 
-          <!-- 右下方修改按键：支持图库选择照片 -->
+          <!-- 修改头像与背景按钮 (支持相册图库) -->
           <div class="relative z-10 flex justify-end mt-6 no-print">
             <button onclick="openThemeModal()" class="bg-white/20 hover:bg-white/30 text-white border border-white/40 backdrop-blur-md text-xs font-semibold px-3 py-1.5 rounded-lg shadow-sm flex items-center space-x-1.5 transition transform hover:scale-105">
               <span>🖼️</span>
@@ -912,7 +574,7 @@ app.get('/employee', (req, res) => {
             </div>
           </div>
 
-          <!-- 快捷打卡区域 (仅员工可见，Admin 查看他人考勤时会自动隐藏) -->
+          <!-- 快捷打卡区域 -->
           <div id="clockArea" class="bg-white p-4 md:p-6 rounded-xl shadow-sm border border-gray-200 flex flex-col justify-center items-center no-print">
             <button id="clockBtn" onclick="toggleClock()" class="w-full h-24 text-xl font-bold rounded-xl text-white transition bg-green-500 hover:bg-green-600 shadow-md">
               上班打卡 (IN)
@@ -1119,7 +781,6 @@ app.get('/employee', (req, res) => {
           if (!res.ok) return location.href = '/';
           currentUser = await res.json();
 
-          // 💡 判断用户角色与当前查看对象
           if (currentUser.role === 'admin') {
             document.getElementById('backAdminBtn').classList.remove('hidden');
             if (viewUserId) {
@@ -1278,7 +939,7 @@ app.get('/employee', (req, res) => {
         }
 
         async function saveThemeSettings() {
-          const payload = { targetUserId };
+          const payload = {};
           if (pendingAvatarBase64 !== null) payload.avatarUrl = pendingAvatarBase64;
           if (pendingBgBase64 !== null) payload.bgUrl = pendingBgBase64;
 
