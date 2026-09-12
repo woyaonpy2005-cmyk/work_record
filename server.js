@@ -13,9 +13,9 @@ const TIMEZONE_NAME = 'Asia/Kuala_Lumpur';
 // 💡 数据库连接字符串
 const MONGO_URI = process.env.MONGO_URI || "mongodb+srv://woyaonpy2005_db_user:Lim050831.@cluster0.ztvp8bb.mongodb.net/attendance_db?appName=Cluster0";
 
-// 💡 放大请求体积限制（防止本地上传大图时报错 413 Payload Too Large）
-app.use(express.json({ limit: '10mb' }));
-app.use(express.urlencoded({ limit: '10mb', extended: true }));
+// 💡 放大请求体积限制（防止 Base64 图片上传时报错 413 Payload Too Large）
+app.use(express.json({ limit: '15mb' }));
+app.use(express.urlencoded({ limit: '15mb', extended: true }));
 
 // 💡 Session 配置：5 分钟自动过期
 app.use(session({
@@ -504,18 +504,20 @@ app.get('/employee', (req, res) => {
       <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/cropperjs/1.5.13/cropper.min.css"/>
       <script src="https://cdnjs.cloudflare.com/ajax/libs/cropperjs/1.5.13/cropper.min.js"></script>
       <style>
+        /* 💡 优化后的宽大背景卡片样式 */
         .header-console-bg {
           background-color: #1e293b;
-          background-size: cover;          /* 使用裁剪后的优质区域铺满整个容器 */
+          background-size: cover;          
           background-position: center;
           background-repeat: no-repeat;
+          min-height: 280px; /* 增大卡片高度，留出充足背景展示空间 */
           transition: background 0.3s ease;
         }
 
         @media print {
           .no-print { display: none !important; }
           body { background: white !important; padding: 0; }
-          .shadow-sm, .shadow-md, .shadow-xl { box-shadow: none !important; }
+          .shadow-sm, .shadow-md, .shadow-xl, .shadow-2xl { box-shadow: none !important; }
         }
       </style>
     </head>
@@ -527,12 +529,13 @@ app.get('/employee', (req, res) => {
           <span>🔒 当前为管理员查看模式 (仅供调阅数据，无法修改或添加打卡记录)</span>
         </div>
 
-        <!-- 控制台头部卡片 -->
-        <div id="headerCard" class="header-console-bg relative p-6 md:p-8 rounded-2xl shadow-lg border border-gray-700 overflow-hidden text-white transition-all duration-300 min-h-[220px] flex flex-col justify-between">
-          <div class="absolute inset-0 bg-black/40 z-0 backdrop-blur-[0.5px]"></div>
+        <!-- 控制台头部大背景卡片 -->
+        <div id="headerCard" class="header-console-bg relative p-6 md:p-8 rounded-2xl shadow-xl border border-gray-700 overflow-hidden text-white flex flex-col justify-between">
+          <!-- 透明暗度蒙版，让前景文字和图片都能保持极高对比度，整洁工整 -->
+          <div class="absolute inset-0 bg-black/45 z-0 backdrop-blur-[0.5px]"></div>
 
           <div class="relative z-10 flex flex-col md:flex-row justify-between items-start md:items-center gap-6">
-            <div class="flex items-center space-x-4">
+            <div class="flex items-center space-x-4 bg-black/30 p-3 rounded-2xl backdrop-blur-md border border-white/10">
               <img id="userAvatar" src="${DEFAULT_AVATAR}" alt="头像" class="w-16 h-16 rounded-full border-2 border-white/80 object-cover bg-white shadow-md flex-shrink-0">
               <div>
                 <h1 class="text-2xl md:text-3xl font-extrabold tracking-wide drop-shadow-md">打卡控制台</h1>
@@ -549,11 +552,11 @@ app.get('/employee', (req, res) => {
             </div>
           </div>
 
-          <!-- 修改外观按钮 -->
-          <div id="themeChangeBtnBox" class="relative z-10 flex justify-end mt-4 no-print">
-            <button onclick="openThemeModal()" class="bg-white/20 hover:bg-white/30 text-white border border-white/40 backdrop-blur-md text-xs font-semibold px-3 py-1.5 rounded-lg shadow-sm flex items-center space-x-1.5 transition transform hover:scale-105">
+          <!-- 修改外观按钮（定位在卡片右下角） -->
+          <div id="themeChangeBtnBox" class="relative z-10 flex justify-end mt-6 no-print">
+            <button onclick="openThemeModal()" class="bg-white/25 hover:bg-white/35 text-white border border-white/40 backdrop-blur-md text-xs font-semibold px-4 py-2 rounded-xl shadow-md flex items-center space-x-2 transition transform hover:scale-105">
               <span>🖼️</span>
-              <span>自定义头像 & 背景 (可自主裁剪)</span>
+              <span>自定义头像与大背景图</span>
             </button>
           </div>
         </div>
@@ -666,17 +669,17 @@ app.get('/employee', (req, res) => {
           </div>
 
           <div>
-            <label class="block text-xs font-semibold text-gray-600 mb-2">2. 更换卡片背景图 (精准裁剪)</label>
+            <label class="block text-xs font-semibold text-gray-600 mb-2">2. 更换大卡片背景图 (精准预览与裁剪)</label>
             <div class="space-y-2">
-              <div id="previewBgBox" class="w-full h-28 rounded-lg border bg-slate-800 bg-cover bg-center bg-no-repeat flex items-center justify-center text-xs text-white/90 shadow-inner">
-                <span class="bg-black/50 px-3 py-1 rounded-full backdrop-blur-sm">已生效背景效果</span>
+              <div id="previewBgBox" class="w-full h-32 rounded-lg border bg-slate-800 bg-cover bg-center bg-no-repeat flex items-center justify-center text-xs text-white/90 shadow-inner">
+                <span class="bg-black/50 px-3 py-1 rounded-full backdrop-blur-sm">即时生效背景效果</span>
               </div>
               <div class="flex items-center justify-between">
                 <label class="cursor-pointer bg-blue-50 hover:bg-blue-100 border border-blue-200 text-blue-700 text-xs font-semibold px-3 py-2 rounded-lg transition">
-                  <span>🖼️ 上传并裁剪背景照片</span>
+                  <span>🖼️ 选择新背景图</span>
                   <input type="file" accept="image/*" onchange="openCropModal(event, 'bg')" class="hidden">
                 </label>
-                <button onclick="resetBg()" class="text-xs text-red-500 hover:underline">恢复默认底色</button>
+                <button onclick="resetBg()" class="text-xs text-red-500 hover:underline">恢复默认深色背景</button>
               </div>
             </div>
           </div>
@@ -692,7 +695,7 @@ app.get('/employee', (req, res) => {
       <div id="cropModal" class="fixed inset-0 bg-black/80 hidden flex items-center justify-center p-4 z-[60] no-print">
         <div class="bg-white rounded-2xl shadow-2xl p-6 w-full max-w-lg space-y-4">
           <div class="flex justify-between items-center border-b pb-2">
-            <h3 id="cropTitle" class="text-base font-bold text-gray-800">自由选择裁切区域</h3>
+            <h3 id="cropTitle" class="text-base font-bold text-gray-800">自由选择裁剪区域</h3>
             <button onclick="closeCropModal()" class="text-gray-400 hover:text-gray-600 font-bold">✕</button>
           </div>
           
@@ -700,11 +703,11 @@ app.get('/employee', (req, res) => {
             <img id="cropImage" class="max-h-full max-w-full">
           </div>
 
-          <p class="text-xs text-gray-500 text-center">💡 提示：拖动或缩放方框，框选出你想展示的照片最佳视角</p>
+          <p class="text-xs text-gray-500 text-center">💡 提示：移动/缩放方框选择主体。裁剪框已自动与你的背景卡片比例完全同步。</p>
 
           <div class="flex justify-end space-x-2 pt-2 border-t">
-            <button onclick="closeCropModal()" class="px-4 py-2 border rounded-lg text-gray-600 text-sm hover:bg-gray-100">放弃</button>
-            <button onclick="confirmCrop()" class="px-5 py-2 bg-green-600 text-white rounded-lg font-semibold text-sm hover:bg-green-700 shadow">确认裁剪</button>
+            <button onclick="closeCropModal()" class="px-4 py-2 border rounded-lg text-gray-600 text-sm hover:bg-gray-100">取消</button>
+            <button onclick="confirmCrop()" class="px-5 py-2 bg-green-600 text-white rounded-lg font-semibold text-sm hover:bg-green-700 shadow">应用裁剪</button>
           </div>
         </div>
       </div>
@@ -888,7 +891,7 @@ app.get('/employee', (req, res) => {
           renderHistoryTable();
         }
 
-        // ==================== 图片裁剪算法 & 交互逻辑 ====================
+        // ==================== 智能匹配比例裁剪算法 ====================
         function openCropModal(event, type) {
           const file = event.target.files[0];
           if (!file) return;
@@ -899,19 +902,27 @@ app.get('/employee', (req, res) => {
             const cropImage = document.getElementById('cropImage');
             cropImage.src = e.target.result;
 
-            document.getElementById('cropTitle').innerText = type === 'avatar' ? '裁剪个人头像 (正方形)' : '裁剪头部背景卡片 (横版宽屏比例)';
+            document.getElementById('cropTitle').innerText = type === 'avatar' ? '裁剪个人头像 (正方形)' : '裁剪大卡片背景图 (精准高宽比)';
             document.getElementById('cropModal').classList.remove('hidden');
 
             if (cropper) cropper.destroy();
 
-            // 头像比例 1:1，背景比例 16:7（完美契合顶部高卡片）
-            const aspectRatio = type === 'avatar' ? 1 : 16 / 7;
+            // 💡 关键：计算页面中真实背景卡片的真实长宽比例，确保“所剪即所得”
+            let aspectRatio = 1; 
+            if (type === 'bg') {
+              const headerCard = document.getElementById('headerCard');
+              if (headerCard && headerCard.clientWidth > 0 && headerCard.clientHeight > 0) {
+                aspectRatio = headerCard.clientWidth / headerCard.clientHeight;
+              } else {
+                aspectRatio = 1000 / 280; // 回退安全比例
+              }
+            }
 
             cropper = new Cropper(cropImage, {
               aspectRatio: aspectRatio,
               viewMode: 1,
               background: false,
-              autoCropArea: 0.9
+              autoCropArea: 0.95
             });
           };
           reader.readAsDataURL(file);
@@ -929,15 +940,22 @@ app.get('/employee', (req, res) => {
         function confirmCrop() {
           if (!cropper) return;
 
-          const width = currentCropType === 'avatar' ? 300 : 1200;
-          const height = currentCropType === 'avatar' ? 300 : 525;
-
-          const canvas = cropper.getCroppedCanvas({
-            width: width,
-            height: height,
-            imageSmoothingEnabled: true,
-            imageSmoothingQuality: 'high'
-          });
+          // 依据裁剪类型导出高质量图片 Base64
+          let canvas;
+          if (currentCropType === 'avatar') {
+            canvas = cropper.getCroppedCanvas({
+              width: 300,
+              height: 300,
+              imageSmoothingEnabled: true,
+              imageSmoothingQuality: 'high'
+            });
+          } else {
+            canvas = cropper.getCroppedCanvas({
+              width: 1400, // 确保在大屏幕电脑上背景图画质也足够清晰
+              imageSmoothingEnabled: true,
+              imageSmoothingQuality: 'high'
+            });
+          }
 
           const croppedBase64 = canvas.toDataURL('image/jpeg', 0.85);
 
