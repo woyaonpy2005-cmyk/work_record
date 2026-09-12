@@ -149,7 +149,7 @@ app.post('/api/user/update-theme', async (req, res) => {
   res.json({ message: '外观设置保存成功！', avatarUrl: user.avatarUrl, bgUrl: user.bgUrl });
 });
 
-// 还原最初的 Admin API：添加员工
+// Admin API：添加员工
 app.post('/api/admin/add-employee', async (req, res) => {
   if (!req.session.user || req.session.user.role !== 'admin') {
     return res.status(403).json({ message: '无权限操作' });
@@ -165,7 +165,7 @@ app.post('/api/admin/add-employee', async (req, res) => {
   res.json({ message: '员工添加成功' });
 });
 
-// 还原最初的 Admin API：获取所有员工列表
+// Admin API：获取所有员工列表
 app.get('/api/admin/employees', async (req, res) => {
   if (!req.session.user || req.session.user.role !== 'admin') {
     return res.status(403).json({ message: '无权限操作' });
@@ -231,7 +231,7 @@ app.post('/api/attendance/toggle', async (req, res) => {
   }
 });
 
-// 手动补录/修改 API
+// 手动补录/修改 API (增加安全鉴权：管理员只读，不允许替他人修改)
 app.post('/api/attendance/manual', async (req, res) => {
   const user = req.session.user;
   if (!user) return res.status(401).json({ message: '未登录或登录已超时' });
@@ -239,7 +239,12 @@ app.post('/api/attendance/manual', async (req, res) => {
   let { date, clockIn, clockOut, targetUserId, remark } = req.body;
   if (!date || !clockIn || !clockOut) return res.status(400).json({ message: '请选择完整的日期与时间' });
 
-  const updateUserId = (user.role === 'admin' && targetUserId) ? targetUserId : user.userId;
+  // 🔒 阻止 Admin 篡改员工数据
+  if (user.role === 'admin' && targetUserId && targetUserId !== user.userId) {
+    return res.status(403).json({ message: '管理员仅具备查看权限，无法修改员工考勤数据！' });
+  }
+
+  const updateUserId = user.userId;
 
   const inDateTime = new Date(`${date}T${clockIn}:00${TIMEZONE_OFFSET}`);
   const outDateTime = new Date(`${date}T${clockOut}:00${TIMEZONE_OFFSET}`);
@@ -269,7 +274,7 @@ app.post('/api/attendance/manual', async (req, res) => {
   res.json({ message: '打卡记录已更新/保存成功！' });
 });
 
-// 删除打卡记录 API
+// 删除打卡记录 API (增加安全鉴权：管理员只读，不允许删除他人数据)
 app.delete('/api/attendance/delete', async (req, res) => {
   const user = req.session.user;
   if (!user) return res.status(401).json({ message: '未登录或登录已超时' });
@@ -277,7 +282,12 @@ app.delete('/api/attendance/delete', async (req, res) => {
   const { date, targetUserId } = req.body;
   if (!date) return res.status(400).json({ message: '缺少参数：日期' });
 
-  const deleteUserId = (user.role === 'admin' && targetUserId) ? targetUserId : user.userId;
+  // 🔒 阻止 Admin 篡改员工数据
+  if (user.role === 'admin' && targetUserId && targetUserId !== user.userId) {
+    return res.status(403).json({ message: '管理员仅具备查看权限，无法删除员工考勤数据！' });
+  }
+
+  const deleteUserId = user.userId;
 
   const deleted = await Attendance.findOneAndDelete({ userId: deleteUserId, date });
   if (!deleted) return res.status(404).json({ message: '未找到该日期的打卡记录' });
@@ -357,7 +367,7 @@ app.get('/', (req, res) => {
   `);
 });
 
-// 页面 2：还原回最初版本的 Admin 控制台页面
+// 页面 2：Admin 控制台页面
 app.get('/admin', (req, res) => {
   res.send(`
     <!DOCTYPE html>
@@ -457,7 +467,7 @@ app.get('/admin', (req, res) => {
                 <div class="font-bold text-lg text-blue-600">\${emp.userId}</div>
                 <div class="text-gray-600 text-sm">\${emp.name}</div>
               </div>
-              <button onclick="viewEmployee('\${emp.userId}')" class="bg-blue-600 text-white px-4 py-2 rounded-lg text-sm font-semibold hover:bg-blue-700 transition">查看考勤</button>
+              <button onclick="viewEmployee('\${emp.userId}')" class="bg-blue-600 text-white px-4 py-2 rounded-lg text-sm font-semibold hover:bg-blue-700 transition">查看考勤 (只读)</button>
             </div>
           \`).join('');
         }
@@ -497,7 +507,7 @@ app.get('/admin', (req, res) => {
   `);
 });
 
-// 页面 3：考勤控制台页
+// 页面 3：考勤控制台页 (已注入 Admin 只读锁定机制)
 app.get('/employee', (req, res) => {
   res.send(`
     <!DOCTYPE html>
@@ -527,6 +537,11 @@ app.get('/employee', (req, res) => {
     <body class="bg-gray-100 p-4 md:p-8 min-h-screen">
       <div class="max-w-5xl mx-auto space-y-6">
 
+        <!-- 只读模式提示横幅 -->
+        <div id="readOnlyBanner" class="hidden bg-amber-500 text-white p-3 rounded-xl shadow-md text-center font-bold text-sm flex items-center justify-center space-x-2">
+          <span>🔒 当前为管理员查看模式 (仅供调阅数据，无法修改或添加打卡记录)</span>
+        </div>
+
         <!-- 控制台头部卡片 -->
         <div id="headerCard" class="header-console-bg relative p-6 md:p-8 rounded-2xl shadow-lg border border-blue-400 overflow-hidden text-white transition-all duration-300">
           <div class="absolute inset-0 bg-black/25 z-0"></div>
@@ -549,8 +564,8 @@ app.get('/employee', (req, res) => {
             </div>
           </div>
 
-          <!-- 修改头像与背景按钮 (支持相册图库) -->
-          <div class="relative z-10 flex justify-end mt-6 no-print">
+          <!-- 修改头像与背景按钮 -->
+          <div id="themeChangeBtnBox" class="relative z-10 flex justify-end mt-6 no-print">
             <button onclick="openThemeModal()" class="bg-white/20 hover:bg-white/30 text-white border border-white/40 backdrop-blur-md text-xs font-semibold px-3 py-1.5 rounded-lg shadow-sm flex items-center space-x-1.5 transition transform hover:scale-105">
               <span>🖼️</span>
               <span>修改头像/背景 (相册图库)</span>
@@ -560,7 +575,7 @@ app.get('/employee', (req, res) => {
 
         <!-- 考勤数据概览区 -->
         <div class="grid grid-cols-1 md:grid-cols-3 gap-6">
-          <div id="statsBox" class="bg-white p-4 md:p-6 rounded-xl shadow-sm border border-gray-200 md:col-span-2">
+          <div id="statsBox" class="bg-white p-4 md:p-6 rounded-xl shadow-sm border border-gray-200 md:col-span-2 transition-all">
             <h3 class="text-sm font-semibold text-gray-500 mb-2">月度考勤统计</h3>
             <div class="grid grid-cols-2 gap-4">
               <div class="bg-blue-50 p-4 rounded-lg border border-blue-100">
@@ -630,7 +645,7 @@ app.get('/employee', (req, res) => {
                   <th class="p-3">OT 时长</th>
                   <th class="p-3">备注</th>
                   <th class="p-3">类型</th>
-                  <th class="p-3 no-print">操作</th>
+                  <th id="thActionHeader" class="p-3 no-print">操作</th>
                 </tr>
               </thead>
               <tbody id="historyTable" class="divide-y text-sm"></tbody>
@@ -695,6 +710,7 @@ app.get('/employee', (req, res) => {
         let targetUserId = '';
         let currentTargetUserObj = null;
         let pickerIn, pickerOut, pickerDate;
+        let isReadOnlyMode = false;
         
         let fullHistoryData = [];
         let showAllHistory = false;
@@ -785,14 +801,24 @@ app.get('/employee', (req, res) => {
             document.getElementById('backAdminBtn').classList.remove('hidden');
             if (viewUserId) {
               targetUserId = viewUserId;
-              document.getElementById('clockArea').classList.add('hidden');
-              document.getElementById('statsBox').classList.remove('md:col-span-2');
-              document.getElementById('statsBox').classList.add('md:col-span-3');
+              isReadOnlyMode = true; // 🔒 开启只读模式
             } else {
               targetUserId = currentUser.userId;
             }
           } else {
             targetUserId = currentUser.userId;
+          }
+
+          // 🔒 若处于管理员只读模式，强行隐藏修改相关UI组件
+          if (isReadOnlyMode) {
+            document.getElementById('readOnlyBanner').classList.remove('hidden');
+            document.getElementById('clockArea').classList.add('hidden');
+            document.getElementById('manualArea').classList.add('hidden');
+            document.getElementById('themeChangeBtnBox').classList.add('hidden');
+            document.getElementById('thActionHeader').classList.add('hidden');
+            
+            document.getElementById('statsBox').classList.remove('md:col-span-2');
+            document.getElementById('statsBox').classList.add('md:col-span-3');
           }
 
           document.getElementById('dispUserId').innerText = targetUserId;
@@ -831,7 +857,7 @@ app.get('/employee', (req, res) => {
           document.getElementById('totalWork').innerText = formatDuration(data.totalWorkHours);
           document.getElementById('totalOt').innerText = formatDuration(data.totalOtHours);
 
-          if (currentUser.role === 'employee' && targetUserId === currentUser.userId) {
+          if (!isReadOnlyMode && currentUser.role === 'employee' && targetUserId === currentUser.userId) {
             const btn = document.getElementById('clockBtn');
             const status = document.getElementById('clockStatus');
             if (!data.todayRecord || !data.todayRecord.clockIn) {
@@ -917,6 +943,7 @@ app.get('/employee', (req, res) => {
         }
 
         function openThemeModal() {
+          if (isReadOnlyMode) return;
           pendingAvatarBase64 = currentTargetUserObj ? currentTargetUserObj.avatarUrl : null;
           pendingBgBase64 = currentTargetUserObj ? currentTargetUserObj.bgUrl : null;
 
@@ -939,6 +966,7 @@ app.get('/employee', (req, res) => {
         }
 
         async function saveThemeSettings() {
+          if (isReadOnlyMode) return;
           const payload = {};
           if (pendingAvatarBase64 !== null) payload.avatarUrl = pendingAvatarBase64;
           if (pendingBgBase64 !== null) payload.bgUrl = pendingBgBase64;
@@ -970,7 +998,8 @@ app.get('/employee', (req, res) => {
           const showMoreBtn = document.getElementById('showMoreBtn');
 
           if (fullHistoryData.length === 0) {
-            table.innerHTML = '<tr><td colspan="8" class="p-4 text-center text-gray-400">该月份暂无打卡记录</td></tr>';
+            const colspanVal = isReadOnlyMode ? 7 : 8;
+            table.innerHTML = \`<tr><td colspan="\${colspanVal}" class="p-4 text-center text-gray-400">该月份暂无打卡记录</td></tr>\`;
             showMoreContainer.classList.add('hidden');
             return;
           }
@@ -1003,10 +1032,12 @@ app.get('/employee', (req, res) => {
                 <td class="p-3 font-semibold text-orange-600">\${formatDuration(row.otHours)}</td>
                 <td class="p-3 text-gray-600">\${row.remark || '-'}</td>
                 <td class="p-3"><span class="px-2 py-1 text-xs rounded \${row.isManual ? 'bg-purple-100 text-purple-700' : 'bg-gray-100 text-gray-600'}">\${row.isManual ? '手动补录/修改' : '实时打卡'}</span></td>
-                <td class="p-3 no-print space-x-2">
-                  <button onclick="editRow('\${row.date}', '\${inTime24}', '\${outTime24}', '\${encodeURIComponent(row.remark || '')}')" class="text-indigo-600 hover:text-indigo-900 font-semibold text-xs border border-indigo-200 px-2 py-1 rounded hover:bg-indigo-50 transition">✏️ 修改</button>
-                  <button onclick="deleteRow('\${row.date}')" class="text-red-600 hover:text-red-900 font-semibold text-xs border border-red-200 px-2 py-1 rounded hover:bg-red-50 transition">🗑️ 删除</button>
-                </td>
+                \${!isReadOnlyMode ? \`
+                  <td class="p-3 no-print space-x-2">
+                    <button onclick="editRow('\${row.date}', '\${inTime24}', '\${outTime24}', '\${encodeURIComponent(row.remark || '')}')" class="text-indigo-600 hover:text-indigo-900 font-semibold text-xs border border-indigo-200 px-2 py-1 rounded hover:bg-indigo-50 transition">✏️ 修改</button>
+                    <button onclick="deleteRow('\${row.date}')" class="text-red-600 hover:text-red-900 font-semibold text-xs border border-red-200 px-2 py-1 rounded hover:bg-red-50 transition">🗑️ 删除</button>
+                  </td>
+                \` : ''}
               </tr>
             \`;
           }).join('');
@@ -1023,6 +1054,7 @@ app.get('/employee', (req, res) => {
         }
 
         function editRow(date, clockIn, clockOut, encodedRemark) {
+          if (isReadOnlyMode) return;
           pickerDate.setDate(date);
           pickerIn.setDate(clockIn);
           pickerOut.setDate(clockOut);
@@ -1033,6 +1065,7 @@ app.get('/employee', (req, res) => {
         }
 
         async function deleteRow(date) {
+          if (isReadOnlyMode) return;
           if (!confirm(\`确定要删除 \${date} 的打卡记录吗？\`)) return;
 
           const res = await fetch('/api/attendance/delete', {
@@ -1048,6 +1081,7 @@ app.get('/employee', (req, res) => {
         }
 
         async function toggleClock() {
+          if (isReadOnlyMode) return;
           const res = await fetch('/api/attendance/toggle', { method: 'POST' });
           const data = await res.json();
           alert(data.message);
@@ -1055,6 +1089,7 @@ app.get('/employee', (req, res) => {
         }
 
         async function addManualRecord() {
+          if (isReadOnlyMode) return;
           const date = document.getElementById('mDate').value;
           const clockIn = document.getElementById('mIn').value;
           const clockOut = document.getElementById('mOut').value;
