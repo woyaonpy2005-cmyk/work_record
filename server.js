@@ -13,7 +13,9 @@ const TIMEZONE_NAME = 'Asia/Kuala_Lumpur';
 // 💡 数据库连接字符串
 const MONGO_URI = process.env.MONGO_URI || "mongodb+srv://woyaonpy2005_db_user:Lim050831.@cluster0.ztvp8bb.mongodb.net/attendance_db?appName=Cluster0";
 
-app.use(express.json());
+// 💡 放大请求体积限制（防止本地上传大图时报错 413 Payload Too Large）
+app.use(express.json({ limit: '10mb' }));
+app.use(express.urlencoded({ limit: '10mb', extended: true }));
 
 // 💡 1. 后端 Session 配置：5 分钟 (300,000 毫秒) 自动过期
 app.use(session({
@@ -32,14 +34,14 @@ const userSchema = new mongoose.Schema({
   password: { type: String, required: true },
   name: { type: String, required: true },
   role: { type: String, enum: ['admin', 'employee'], default: 'employee' },
-  avatarUrl: { type: String, default: DEFAULT_AVATAR }, // 💡 默认黑白头像
-  bgUrl: { type: String, default: '' }                  // 💡 默认为空 (控制台呈现初始蓝色背景)
+  avatarUrl: { type: String, default: DEFAULT_AVATAR }, // 💡 支持 Base64 图片数据
+  bgUrl: { type: String, default: '' }                  // 💡 支持 Base64 图片数据
 });
 const User = mongoose.model('User', userSchema);
 
 const attendanceSchema = new mongoose.Schema({
   userId: { type: String, required: true },
-  date: { type: String, required: true }, 
+  date: { type: String, required: true }, // YYYY-MM-DD
   clockIn: { type: Date, default: null },
   clockOut: { type: Date, default: null },
   workHours: { type: Number, default: 0 }, 
@@ -130,7 +132,7 @@ app.post('/api/logout', (req, res) => {
   res.json({ success: true });
 });
 
-// 💡 修改控制台头像与背景 API
+// 💡 修改控制台头像与背景 API (支持本地 Base64 数据保存)
 app.post('/api/user/update-theme', async (req, res) => {
   if (!req.session.user) return res.status(401).json({ message: '未登录或登录已超时' });
   const { avatarUrl, bgUrl, targetUserId } = req.body;
@@ -144,7 +146,7 @@ app.post('/api/user/update-theme', async (req, res) => {
   if (bgUrl !== undefined) user.bgUrl = bgUrl.trim();
 
   await user.save();
-  res.json({ message: '控制台头像与背景更新成功！', avatarUrl: user.avatarUrl, bgUrl: user.bgUrl });
+  res.json({ message: '控制台外观设置（头像/背景）更新成功！', avatarUrl: user.avatarUrl, bgUrl: user.bgUrl });
 });
 
 // Admin API：添加员工
@@ -418,10 +420,10 @@ app.get('/admin', (req, res) => {
       <div class="max-w-4xl mx-auto space-y-6 md:space-y-8">
         <div class="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4 mb-4">
           <h1 class="text-2xl md:text-3xl font-bold text-gray-800">管理员控制台 (Admin)</h1>
-          <button onclick="logout()" class="bg-red-500 text-white px-4 py-2 rounded-lg w-full sm:w-auto">退出登录</button>
+          <button onclick="logout()" class="bg-red-500 text-white px-4 py-2 rounded-lg w-full sm:w-auto hover:bg-red-600 transition">退出登录</button>
         </div>
 
-        <div class="bg-white p-4 md:p-6 rounded-xl shadow-sm">
+        <div class="bg-white p-4 md:p-6 rounded-xl shadow-sm border border-gray-200">
           <h2 class="text-xl font-bold mb-4">➕ 添加新员工</h2>
           <div class="grid grid-cols-1 sm:grid-cols-3 gap-4">
             <input type="text" id="newId" placeholder="员工 ID (例如: emp01)" class="border p-2 rounded-lg outline-none focus:ring-2 focus:ring-green-500">
@@ -436,7 +438,7 @@ app.get('/admin', (req, res) => {
           <button onclick="addEmployee()" class="mt-4 w-full sm:w-auto bg-green-600 text-white px-6 py-2 rounded-lg font-semibold hover:bg-green-700 transition">添加员工</button>
         </div>
 
-        <div class="bg-white p-4 md:p-6 rounded-xl shadow-sm">
+        <div class="bg-white p-4 md:p-6 rounded-xl shadow-sm border border-gray-200">
           <h2 class="text-xl font-bold mb-4">👥 员工列表管理</h2>
           <div id="employeeList" class="grid grid-cols-1 sm:grid-cols-2 gap-4"></div>
         </div>
@@ -645,11 +647,18 @@ app.get('/employee', (req, res) => {
     <head>
       <meta charset="UTF-8">
       <meta name="viewport" content="width=device-width, initial-scale=1.0">
-      <title>员工打卡控制台</title>
+      <title>员工打卡页面</title>
       <script src="https://cdn.tailwindcss.com"></script>
       <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/flatpickr/dist/flatpickr.min.css">
       <script src="https://cdn.jsdelivr.net/npm/flatpickr"></script>
       <style>
+        .header-console-bg {
+          background-color: #2563eb;
+          background-size: cover;
+          background-position: center;
+          transition: background 0.3s ease;
+        }
+
         @media print {
           .no-print { display: none !important; }
           body { background: white !important; padding: 0; }
@@ -660,59 +669,50 @@ app.get('/employee', (req, res) => {
     <body class="bg-gray-100 p-4 md:p-8 min-h-screen">
       <div class="max-w-5xl mx-auto space-y-6">
 
-        <!-- 💡 核心控制台顶部 Banner (仅此区域支持自定义照片与蓝背景，修改按键在右下方) -->
-        <div id="consoleCard" class="relative overflow-hidden rounded-xl shadow-md p-5 md:p-6 transition-all duration-300 text-white bg-gradient-to-r from-blue-700 to-blue-500 bg-cover bg-center">
-          
-          <!-- 背景遮罩 (提高照片上文字可读性) -->
-          <div id="cardOverlay" class="absolute inset-0 bg-black/20 pointer-events-none hidden"></div>
+        <!-- 员工打卡控制台卡片 -->
+        <div id="headerCard" class="header-console-bg relative p-6 md:p-8 rounded-2xl shadow-lg border border-blue-400 overflow-hidden text-white transition-all duration-300">
+          <div class="absolute inset-0 bg-black/25 z-0"></div>
 
           <div class="relative z-10 flex flex-col md:flex-row justify-between items-start md:items-center gap-6">
-            
-            <!-- 左侧：黑白头像 / 自定义头像与标题信息 -->
             <div class="flex items-center space-x-4">
               <img id="userAvatar" src="${DEFAULT_AVATAR}" alt="头像" class="w-16 h-16 rounded-full border-2 border-white/80 object-cover bg-white shadow-md flex-shrink-0">
               <div>
-                <h1 class="text-2xl md:text-3xl font-extrabold tracking-wide drop-shadow-sm">员工打卡控制台</h1>
-                <p class="text-white/90 text-sm mt-1 font-medium">当前查看员工 ID: <span id="dispUserId" class="font-bold underline underline-offset-4">---</span></p>
+                <h1 class="text-2xl md:text-3xl font-extrabold tracking-wide drop-shadow">员工打卡控制台</h1>
+                <p class="text-blue-100 text-sm mt-1">当前查看员工 ID: <span id="dispUserId" class="font-bold underline text-white">---</span></p>
               </div>
             </div>
 
-            <!-- 右侧：上为功能操作按钮，右下方为修改头像和背景推荐按钮 -->
-            <div class="flex flex-col items-end w-full md:w-auto space-y-3 no-print">
-              <!-- 右上方按键 -->
-              <div class="flex space-x-2 w-full md:w-auto">
-                <button onclick="window.print()" class="bg-slate-800/80 hover:bg-slate-900 text-white px-4 py-2 rounded-lg text-sm font-semibold flex-1 md:flex-none transition shadow backdrop-blur-sm border border-white/10">🖨️ 打印记录</button>
-                <button id="logoutBtn" onclick="logout()" class="bg-red-500 hover:bg-red-600 text-white px-4 py-2 rounded-lg text-sm font-semibold flex-1 md:flex-none transition shadow">退出登录</button>
-              </div>
-
-              <!-- 💡 推荐：放在控制台右下方的修改按键 -->
-              <div>
-                <button onclick="openThemeModal()" class="bg-white/20 hover:bg-white/30 text-white border border-white/40 text-xs px-3.5 py-1.5 rounded-lg font-medium transition backdrop-blur-md flex items-center space-x-1.5 shadow-sm">
-                  <span>📷</span>
-                  <span>修改头像与背景</span>
-                </button>
-              </div>
+            <div class="space-x-2 no-print flex w-full md:w-auto justify-end">
+              <button onclick="window.print()" class="bg-white/20 hover:bg-white/30 text-white backdrop-blur-md px-4 py-2 rounded-lg text-sm font-medium border border-white/30 transition shadow-sm flex items-center gap-1">🖨️ 打印记录</button>
+              <button id="logoutBtn" onclick="logout()" class="bg-red-500 hover:bg-red-600 text-white px-4 py-2 rounded-lg text-sm font-medium transition shadow-sm">退出登录</button>
             </div>
+          </div>
 
+          <!-- 右下方修改按键：支持从图库/本地选择 -->
+          <div class="relative z-10 flex justify-end mt-6 no-print">
+            <button onclick="openThemeModal()" class="bg-white/20 hover:bg-white/30 text-white border border-white/40 backdrop-blur-md text-xs font-semibold px-3 py-1.5 rounded-lg shadow-sm flex items-center space-x-1.5 transition transform hover:scale-105">
+              <span>🖼️</span>
+              <span>修改头像/背景 (相册图库)</span>
+            </button>
           </div>
         </div>
 
-        <!-- 统计面板 -->
+        <!-- 考勤数据概览区 -->
         <div class="grid grid-cols-1 md:grid-cols-3 gap-6">
-          <div class="bg-white p-4 md:p-6 rounded-xl shadow-sm md:col-span-2 border border-gray-100">
-            <h3 class="text-sm font-semibold text-gray-400 mb-2">月度考勤统计</h3>
+          <div class="bg-white p-4 md:p-6 rounded-xl shadow-sm border border-gray-200 md:col-span-2">
+            <h3 class="text-sm font-semibold text-gray-500 mb-2">月度考勤统计</h3>
             <div class="grid grid-cols-2 gap-4">
-              <div class="bg-blue-50/80 p-4 rounded-lg border border-blue-100">
+              <div class="bg-blue-50 p-4 rounded-lg border border-blue-100">
                 <div class="text-gray-500 text-xs sm:text-sm">月总工作时长 (已扣休息)</div>
                 <div class="text-xl sm:text-2xl font-extrabold text-blue-600 mt-1" id="totalWork">0 小时</div>
               </div>
-              <div class="bg-orange-50/80 p-4 rounded-lg border border-orange-100">
+              <div class="bg-orange-50 p-4 rounded-lg border border-orange-100">
                 <div class="text-gray-500 text-xs sm:text-sm">月总 OT (加班时长)</div>
                 <div class="text-xl sm:text-2xl font-extrabold text-orange-600 mt-1" id="totalOt">0 小时</div>
               </div>
             </div>
           </div>
-          <div id="clockArea" class="bg-white p-4 md:p-6 rounded-xl shadow-sm flex flex-col justify-center items-center border border-gray-100 no-print">
+          <div id="clockArea" class="bg-white p-4 md:p-6 rounded-xl shadow-sm border border-gray-200 flex flex-col justify-center items-center no-print">
             <button id="clockBtn" onclick="toggleClock()" class="w-full h-24 text-xl font-bold rounded-xl text-white transition bg-green-500 hover:bg-green-600 shadow-md">
               上班打卡 (IN)
             </button>
@@ -720,8 +720,8 @@ app.get('/employee', (req, res) => {
           </div>
         </div>
 
-        <!-- 📝 补录与修改区域 -->
-        <div id="manualArea" class="bg-white p-4 md:p-6 rounded-xl shadow-sm border border-gray-100 no-print">
+        <!-- 补录与修改区域 -->
+        <div id="manualArea" class="bg-white p-4 md:p-6 rounded-xl shadow-sm border border-gray-200 no-print">
           <h3 id="formTitle" class="text-lg font-bold mb-4 text-gray-800">添加/修改打卡记录</h3>
           <div class="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-5 gap-4">
             <div>
@@ -747,7 +747,7 @@ app.get('/employee', (req, res) => {
         </div>
 
         <!-- 历史记录表格 -->
-        <div class="bg-white p-4 md:p-6 rounded-xl shadow-sm border border-gray-100">
+        <div class="bg-white p-4 md:p-6 rounded-xl shadow-sm border border-gray-200">
           <div class="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4 mb-4">
             <h3 class="text-lg font-bold text-gray-800">打卡历史记录</h3>
             <div class="flex items-center space-x-2 no-print">
@@ -782,24 +782,42 @@ app.get('/employee', (req, res) => {
         </div>
       </div>
 
-      <!-- 💡 修改控制台头像与背景弹窗 Modal -->
-      <div id="themeModal" class="fixed inset-0 bg-black/50 hidden flex items-center justify-center p-4 z-50 no-print">
-        <div class="bg-white rounded-xl shadow-xl p-6 w-full max-w-md space-y-4">
+      <!-- 💡 核心升级：支持相册/手机图库照片上传的 Modal -->
+      <div id="themeModal" class="fixed inset-0 bg-black/60 hidden flex items-center justify-center p-4 z-50 no-print">
+        <div class="bg-white rounded-2xl shadow-2xl p-6 w-full max-w-md space-y-5 text-gray-800">
           <div class="flex justify-between items-center border-b pb-3">
-            <h3 class="text-lg font-bold text-gray-800">修改控制台头像与背景照片</h3>
+            <h3 class="text-lg font-bold">更换控制台头像与背景</h3>
             <button onclick="closeThemeModal()" class="text-gray-400 hover:text-gray-600 font-bold">✕</button>
           </div>
           
+          <!-- 本地选择头像照片 -->
           <div>
-            <label class="block text-xs font-semibold text-gray-600 mb-1">左侧头像链接 (Image URL)</label>
-            <input type="text" id="themeAvatarUrl" placeholder="输入头像图片链接 (留空即恢复默认黑白头像)" class="w-full border p-2.5 rounded-lg text-sm outline-none focus:ring-2 focus:ring-blue-500">
-            <p class="text-[11px] text-gray-400 mt-1">留空并保存即可恢复初始黑白头像</p>
+            <label class="block text-xs font-semibold text-gray-600 mb-1">更换左上头像</label>
+            <div class="flex items-center space-x-3">
+              <img id="previewAvatar" src="${DEFAULT_AVATAR}" class="w-12 h-12 rounded-full border object-cover bg-gray-50">
+              <label class="cursor-pointer bg-gray-100 hover:bg-gray-200 border text-gray-700 text-xs font-semibold px-3 py-2 rounded-lg transition">
+                <span>📁 从图库/手机选择</span>
+                <input type="file" id="avatarFileInput" accept="image/*" onchange="handleFileSelect(event, 'avatar')" class="hidden">
+              </label>
+              <button onclick="resetAvatar()" class="text-xs text-red-500 hover:underline">还原默认</button>
+            </div>
           </div>
 
+          <!-- 本地选择背景照片 -->
           <div>
-            <label class="block text-xs font-semibold text-gray-600 mb-1">控制台背景照片链接 (Image URL)</label>
-            <input type="text" id="themeBgUrl" placeholder="输入背景图片链接 (留空即恢复默认蓝色)" class="w-full border p-2.5 rounded-lg text-sm outline-none focus:ring-2 focus:ring-blue-500">
-            <p class="text-[11px] text-gray-400 mt-1">留空并保存即可恢复默认蓝色背景</p>
+            <label class="block text-xs font-semibold text-gray-600 mb-1">更换控制台背景照片</label>
+            <div class="space-y-2">
+              <div id="previewBgBox" class="w-full h-20 rounded-lg border bg-blue-600 bg-cover bg-center flex items-center justify-center text-xs text-white/70">
+                默认蓝色背景
+              </div>
+              <div class="flex items-center justify-between">
+                <label class="cursor-pointer bg-gray-100 hover:bg-gray-200 border text-gray-700 text-xs font-semibold px-3 py-2 rounded-lg transition">
+                  <span>📁 从图库/手机选择照片</span>
+                  <input type="file" id="bgFileInput" accept="image/*" onchange="handleFileSelect(event, 'bg')" class="hidden">
+                </label>
+                <button onclick="resetBg()" class="text-xs text-red-500 hover:underline">还原默认蓝色</button>
+              </div>
+            </div>
           </div>
 
           <div class="flex justify-end space-x-2 pt-2 border-t">
@@ -819,6 +837,10 @@ app.get('/employee', (req, res) => {
         
         let fullHistoryData = [];
         let showAllHistory = false;
+
+        // 暂存即将保存的 Base64 图片字符串
+        let pendingAvatarBase64 = null;
+        let pendingBgBase64 = null;
 
         const weekDays = ['星期日', '星期一', '星期二', '星期三', '星期四', '星期五', '星期六'];
 
@@ -909,21 +931,19 @@ app.get('/employee', (req, res) => {
           loadAttendanceData();
         }
 
-        // 💡 仅改变打卡控制台卡片本身的背景与头像
+        // 💡 渲染顶栏卡片样式
         function applyUserTheme(avatarUrl, bgUrl) {
           const avatarImg = document.getElementById('userAvatar');
           if (avatarImg) {
             avatarImg.src = avatarUrl || "${DEFAULT_AVATAR}";
           }
 
-          const consoleCard = document.getElementById('consoleCard');
-          const overlay = document.getElementById('cardOverlay');
+          const headerCard = document.getElementById('headerCard');
           if (bgUrl && bgUrl.trim() !== '') {
-            consoleCard.style.backgroundImage = \`url('\${bgUrl}')\`;
-            overlay.classList.remove('hidden'); // 显示黑色暗化遮罩，确保文字清晰可见
+            headerCard.style.backgroundImage = \`url('\${bgUrl}')\`;
           } else {
-            consoleCard.style.backgroundImage = '';
-            overlay.classList.add('hidden');
+            headerCard.style.backgroundImage = 'none';
+            headerCard.style.backgroundColor = '#2563eb';
           }
         }
 
@@ -967,13 +987,84 @@ app.get('/employee', (req, res) => {
           renderHistoryTable();
         }
 
-        function openThemeModal() {
-          const avatarInput = document.getElementById('themeAvatarUrl');
-          const bgInput = document.getElementById('themeBgUrl');
+        // 💡 压缩并读取图库图片为 Base64
+        function compressAndReadImage(file, maxWidth, maxHeight, callback) {
+          const reader = new FileReader();
+          reader.onload = function(e) {
+            const img = new Image();
+            img.onload = function() {
+              const canvas = document.createElement('canvas');
+              let width = img.width;
+              let height = img.height;
 
-          if (currentTargetUserObj) {
-            avatarInput.value = currentTargetUserObj.avatarUrl && !currentTargetUserObj.avatarUrl.startsWith('data:image/svg+xml') ? currentTargetUserObj.avatarUrl : '';
-            bgInput.value = currentTargetUserObj.bgUrl || '';
+              if (width > maxWidth) {
+                height = Math.round((height * maxWidth) / width);
+                width = maxWidth;
+              }
+              if (height > maxHeight) {
+                width = Math.round((width * maxHeight) / height);
+                height = maxHeight;
+              }
+
+              canvas.width = width;
+              canvas.height = height;
+              const ctx = canvas.getContext('2d');
+              ctx.drawImage(img, 0, 0, width, height);
+
+              // 导出为压缩过后的 JPEG Base64
+              const compressedBase64 = canvas.toDataURL('image/jpeg', 0.85);
+              callback(compressedBase64);
+            };
+            img.src = e.target.result;
+          };
+          reader.readAsDataURL(file);
+        }
+
+        // 处理相册选图事件
+        function handleFileSelect(event, type) {
+          const file = event.target.files[0];
+          if (!file) return;
+
+          if (type === 'avatar') {
+            compressAndReadImage(file, 300, 300, (base64) => {
+              pendingAvatarBase64 = base64;
+              document.getElementById('previewAvatar').src = base64;
+            });
+          } else if (type === 'bg') {
+            compressAndReadImage(file, 1200, 800, (base64) => {
+              pendingBgBase64 = base64;
+              const previewBgBox = document.getElementById('previewBgBox');
+              previewBgBox.style.backgroundImage = \`url('\${base64}')\`;
+              previewBgBox.innerText = '';
+            });
+          }
+        }
+
+        function resetAvatar() {
+          pendingAvatarBase64 = "${DEFAULT_AVATAR}";
+          document.getElementById('previewAvatar').src = "${DEFAULT_AVATAR}";
+        }
+
+        function resetBg() {
+          pendingBgBase64 = "";
+          const previewBgBox = document.getElementById('previewBgBox');
+          previewBgBox.style.backgroundImage = 'none';
+          previewBgBox.innerText = '默认蓝色背景';
+        }
+
+        function openThemeModal() {
+          pendingAvatarBase64 = currentTargetUserObj ? currentTargetUserObj.avatarUrl : null;
+          pendingBgBase64 = currentTargetUserObj ? currentTargetUserObj.bgUrl : null;
+
+          document.getElementById('previewAvatar').src = pendingAvatarBase64 || "${DEFAULT_AVATAR}";
+          
+          const previewBgBox = document.getElementById('previewBgBox');
+          if (pendingBgBase64 && pendingBgBase64.trim() !== '') {
+            previewBgBox.style.backgroundImage = \`url('\${pendingBgBase64}')\`;
+            previewBgBox.innerText = '';
+          } else {
+            previewBgBox.style.backgroundImage = 'none';
+            previewBgBox.innerText = '默认蓝色背景';
           }
 
           document.getElementById('themeModal').classList.remove('hidden');
@@ -984,13 +1075,14 @@ app.get('/employee', (req, res) => {
         }
 
         async function saveThemeSettings() {
-          const avatarUrl = document.getElementById('themeAvatarUrl').value;
-          const bgUrl = document.getElementById('themeBgUrl').value;
+          const payload = { targetUserId };
+          if (pendingAvatarBase64 !== null) payload.avatarUrl = pendingAvatarBase64;
+          if (pendingBgBase64 !== null) payload.bgUrl = pendingBgBase64;
 
           const res = await fetch('/api/user/update-theme', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ avatarUrl, bgUrl, targetUserId })
+            body: JSON.stringify(payload)
           });
           const data = await res.json();
           alert(data.message);
