@@ -17,7 +17,7 @@ const MONGO_URI = process.env.MONGO_URI || "mongodb+srv://woyaonpy2005_db_user:L
 app.use(express.json({ limit: '10mb' }));
 app.use(express.urlencoded({ limit: '10mb', extended: true }));
 
-// 💡 1. 后端 Session 配置：5 分钟 (300,000 毫秒) 自动过期
+// 💡 Session 配置：5 分钟自动过期
 app.use(session({
   secret: 'attendance_secret_key_123',
   resave: false,
@@ -40,7 +40,7 @@ const User = mongoose.model('User', userSchema);
 
 const attendanceSchema = new mongoose.Schema({
   userId: { type: String, required: true },
-  date: { type: String, required: true }, // YYYY-MM-DD
+  date: { type: String, required: true },
   clockIn: { type: Date, default: null },
   clockOut: { type: Date, default: null },
   workHours: { type: Number, default: 0 }, 
@@ -50,7 +50,7 @@ const attendanceSchema = new mongoose.Schema({
 });
 const Attendance = mongoose.model('Attendance', attendanceSchema);
 
-// 连接 MongoDB Atlas
+// 连接 MongoDB
 mongoose.connect(MONGO_URI)
   .then(async () => {
     console.log('✅ 成功连接至 MongoDB Atlas 云数据库');
@@ -69,13 +69,11 @@ mongoose.connect(MONGO_URI)
   })
   .catch(err => console.error('❌ MongoDB Atlas 连接失败:', err));
 
-// 辅助函数：按本地时区获取 YYYY-MM-DD
 const getTodayStr = () => {
   const d = new Date();
   return d.toLocaleDateString('en-CA', { timeZone: TIMEZONE_NAME });
 };
 
-// 工时计算逻辑（自动扣除1小时休息时间）
 const calculateHours = (inTime, outTime) => {
   if (!inTime || !outTime) return { workHours: 0, otHours: 0 };
   const diffMs = new Date(outTime) - new Date(inTime);
@@ -95,7 +93,6 @@ const calculateHours = (inTime, outTime) => {
 
 // ==================== 2. API 路由 ====================
 
-// 登录 API
 app.post('/api/login', async (req, res) => {
   const { userId, password } = req.body;
   const user = await User.findOne({ userId });
@@ -114,7 +111,6 @@ app.post('/api/login', async (req, res) => {
   res.json({ role: user.role, userId: user.userId });
 });
 
-// 获取当前登录人
 app.get('/api/me', async (req, res) => {
   if (!req.session.user) return res.status(401).json({ message: '未登录或登录已超时' });
   const user = await User.findOne({ userId: req.session.user.userId });
@@ -125,13 +121,11 @@ app.get('/api/me', async (req, res) => {
   res.json(req.session.user);
 });
 
-// 退出登录
 app.post('/api/logout', (req, res) => {
   req.session.destroy();
   res.json({ success: true });
 });
 
-// 修改个人外观 API (支持相册图库 Base64)
 app.post('/api/user/update-theme', async (req, res) => {
   if (!req.session.user) return res.status(401).json({ message: '未登录或登录已超时' });
   const { avatarUrl, bgUrl } = req.body;
@@ -149,7 +143,6 @@ app.post('/api/user/update-theme', async (req, res) => {
   res.json({ message: '外观设置保存成功！', avatarUrl: user.avatarUrl, bgUrl: user.bgUrl });
 });
 
-// Admin API：添加员工
 app.post('/api/admin/add-employee', async (req, res) => {
   if (!req.session.user || req.session.user.role !== 'admin') {
     return res.status(403).json({ message: '无权限操作' });
@@ -165,7 +158,6 @@ app.post('/api/admin/add-employee', async (req, res) => {
   res.json({ message: '员工添加成功' });
 });
 
-// Admin API：获取所有员工列表
 app.get('/api/admin/employees', async (req, res) => {
   if (!req.session.user || req.session.user.role !== 'admin') {
     return res.status(403).json({ message: '无权限操作' });
@@ -174,7 +166,6 @@ app.get('/api/admin/employees', async (req, res) => {
   res.json(employees);
 });
 
-// 获取考勤数据 API
 app.get('/api/attendance/:targetUserId', async (req, res) => {
   if (!req.session.user) return res.status(401).json({ message: '未登录或登录已超时' });
   
@@ -207,7 +198,6 @@ app.get('/api/attendance/:targetUserId', async (req, res) => {
   });
 });
 
-// 实时 Toggle 打卡 API
 app.post('/api/attendance/toggle', async (req, res) => {
   const user = req.session.user;
   if (!user || user.role !== 'employee') return res.status(403).json({ message: '仅员工账户能进行快捷实时打卡' });
@@ -231,7 +221,6 @@ app.post('/api/attendance/toggle', async (req, res) => {
   }
 });
 
-// 手动补录/修改 API (增加安全鉴权：管理员只读，不允许替他人修改)
 app.post('/api/attendance/manual', async (req, res) => {
   const user = req.session.user;
   if (!user) return res.status(401).json({ message: '未登录或登录已超时' });
@@ -239,13 +228,11 @@ app.post('/api/attendance/manual', async (req, res) => {
   let { date, clockIn, clockOut, targetUserId, remark } = req.body;
   if (!date || !clockIn || !clockOut) return res.status(400).json({ message: '请选择完整的日期与时间' });
 
-  // 🔒 阻止 Admin 篡改员工数据
   if (user.role === 'admin' && targetUserId && targetUserId !== user.userId) {
     return res.status(403).json({ message: '管理员仅具备查看权限，无法修改员工考勤数据！' });
   }
 
   const updateUserId = user.userId;
-
   const inDateTime = new Date(`${date}T${clockIn}:00${TIMEZONE_OFFSET}`);
   const outDateTime = new Date(`${date}T${clockOut}:00${TIMEZONE_OFFSET}`);
 
@@ -274,7 +261,6 @@ app.post('/api/attendance/manual', async (req, res) => {
   res.json({ message: '打卡记录已更新/保存成功！' });
 });
 
-// 删除打卡记录 API (增加安全鉴权：管理员只读，不允许删除他人数据)
 app.delete('/api/attendance/delete', async (req, res) => {
   const user = req.session.user;
   if (!user) return res.status(401).json({ message: '未登录或登录已超时' });
@@ -282,13 +268,11 @@ app.delete('/api/attendance/delete', async (req, res) => {
   const { date, targetUserId } = req.body;
   if (!date) return res.status(400).json({ message: '缺少参数：日期' });
 
-  // 🔒 阻止 Admin 篡改员工数据
   if (user.role === 'admin' && targetUserId && targetUserId !== user.userId) {
     return res.status(403).json({ message: '管理员仅具备查看权限，无法删除员工考勤数据！' });
   }
 
   const deleteUserId = user.userId;
-
   const deleted = await Attendance.findOneAndDelete({ userId: deleteUserId, date });
   if (!deleted) return res.status(404).json({ message: '未找到该日期的打卡记录' });
 
@@ -297,7 +281,6 @@ app.delete('/api/attendance/delete', async (req, res) => {
 
 // ==================== 3. 前端页面路由 ====================
 
-// 页面 1：登录界面
 app.get('/', (req, res) => {
   res.send(`
     <!DOCTYPE html>
@@ -367,7 +350,6 @@ app.get('/', (req, res) => {
   `);
 });
 
-// 页面 2：Admin 控制台页面
 app.get('/admin', (req, res) => {
   res.send(`
     <!DOCTYPE html>
@@ -507,7 +489,6 @@ app.get('/admin', (req, res) => {
   `);
 });
 
-// 页面 3：考勤控制台页 (已注入 Admin 只读锁定机制)
 app.get('/employee', (req, res) => {
   res.send(`
     <!DOCTYPE html>
@@ -520,10 +501,12 @@ app.get('/employee', (req, res) => {
       <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/flatpickr/dist/flatpickr.min.css">
       <script src="https://cdn.jsdelivr.net/npm/flatpickr"></script>
       <style>
+        /* 🎨 优化后的 CSS 自动居中与等比自适应样式 */
         .header-console-bg {
           background-color: #2563eb;
-          background-size: cover;
-          background-position: center;
+          background-size: cover;          /* 保证图片铺满且不拉伸变形 */
+          background-position: center;      /* 自动将图片的重点部分居中对齐 */
+          background-repeat: no-repeat;
           transition: background 0.3s ease;
         }
 
@@ -544,7 +527,7 @@ app.get('/employee', (req, res) => {
 
         <!-- 控制台头部卡片 -->
         <div id="headerCard" class="header-console-bg relative p-6 md:p-8 rounded-2xl shadow-lg border border-blue-400 overflow-hidden text-white transition-all duration-300">
-          <div class="absolute inset-0 bg-black/25 z-0"></div>
+          <div class="absolute inset-0 bg-black/35 z-0 backdrop-blur-[1px]"></div>
 
           <div class="relative z-10 flex flex-col md:flex-row justify-between items-start md:items-center gap-6">
             <div class="flex items-center space-x-4">
@@ -568,7 +551,7 @@ app.get('/employee', (req, res) => {
           <div id="themeChangeBtnBox" class="relative z-10 flex justify-end mt-6 no-print">
             <button onclick="openThemeModal()" class="bg-white/20 hover:bg-white/30 text-white border border-white/40 backdrop-blur-md text-xs font-semibold px-3 py-1.5 rounded-lg shadow-sm flex items-center space-x-1.5 transition transform hover:scale-105">
               <span>🖼️</span>
-              <span>修改头像/背景 (相册图库)</span>
+              <span>修改头像/背景 (智能适应)</span>
             </button>
           </div>
         </div>
@@ -660,11 +643,11 @@ app.get('/employee', (req, res) => {
         </div>
       </div>
 
-      <!-- 支持本地相册/图库照片上传 Modal -->
+      <!-- 图片上传与预览 Modal -->
       <div id="themeModal" class="fixed inset-0 bg-black/60 hidden flex items-center justify-center p-4 z-50 no-print">
         <div class="bg-white rounded-2xl shadow-2xl p-6 w-full max-w-md space-y-5 text-gray-800">
           <div class="flex justify-between items-center border-b pb-3">
-            <h3 class="text-lg font-bold">更换头像与控制台背景</h3>
+            <h3 class="text-lg font-bold">个性化修改 (自动适应全屏)</h3>
             <button onclick="closeThemeModal()" class="text-gray-400 hover:text-gray-600 font-bold">✕</button>
           </div>
           
@@ -673,7 +656,7 @@ app.get('/employee', (req, res) => {
             <div class="flex items-center space-x-3">
               <img id="previewAvatar" src="${DEFAULT_AVATAR}" class="w-12 h-12 rounded-full border object-cover bg-gray-50">
               <label class="cursor-pointer bg-gray-100 hover:bg-gray-200 border text-gray-700 text-xs font-semibold px-3 py-2 rounded-lg transition">
-                <span>📁 从图库/手机选择照片</span>
+                <span>📁 从手机/相册选择</span>
                 <input type="file" id="avatarFileInput" accept="image/*" onchange="handleFileSelect(event, 'avatar')" class="hidden">
               </label>
               <button onclick="resetAvatar()" class="text-xs text-red-500 hover:underline">还原默认</button>
@@ -681,24 +664,24 @@ app.get('/employee', (req, res) => {
           </div>
 
           <div>
-            <label class="block text-xs font-semibold text-gray-600 mb-1">更换控制台背景照片</label>
+            <label class="block text-xs font-semibold text-gray-600 mb-1">更换背景照片 (已启用居中裁剪与缩放)</label>
             <div class="space-y-2">
-              <div id="previewBgBox" class="w-full h-20 rounded-lg border bg-blue-600 bg-cover bg-center flex items-center justify-center text-xs text-white/70">
-                默认蓝色背景
+              <div id="previewBgBox" class="w-full h-24 rounded-lg border bg-blue-600 bg-cover bg-center flex items-center justify-center text-xs text-white/90 shadow-inner relative overflow-hidden">
+                <span class="z-10 bg-black/40 px-3 py-1 rounded-full backdrop-blur-sm">预览自适应效果</span>
               </div>
               <div class="flex items-center justify-between">
                 <label class="cursor-pointer bg-gray-100 hover:bg-gray-200 border text-gray-700 text-xs font-semibold px-3 py-2 rounded-lg transition">
-                  <span>📁 从图库/手机选择照片</span>
+                  <span>📁 选择照片</span>
                   <input type="file" id="bgFileInput" accept="image/*" onchange="handleFileSelect(event, 'bg')" class="hidden">
                 </label>
-                <button onclick="resetBg()" class="text-xs text-red-500 hover:underline">还原默认蓝色</button>
+                <button onclick="resetBg()" class="text-xs text-red-500 hover:underline">还原蓝色背景</button>
               </div>
             </div>
           </div>
 
           <div class="flex justify-end space-x-2 pt-2 border-t">
             <button onclick="closeThemeModal()" class="px-4 py-2 border rounded-lg text-gray-600 hover:bg-gray-100 text-sm">取消</button>
-            <button onclick="saveThemeSettings()" class="px-5 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 font-semibold text-sm transition">保存生效</button>
+            <button onclick="saveThemeSettings()" class="px-5 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 font-semibold text-sm transition">保存配置</button>
           </div>
         </div>
       </div>
@@ -801,7 +784,7 @@ app.get('/employee', (req, res) => {
             document.getElementById('backAdminBtn').classList.remove('hidden');
             if (viewUserId) {
               targetUserId = viewUserId;
-              isReadOnlyMode = true; // 🔒 开启只读模式
+              isReadOnlyMode = true; 
             } else {
               targetUserId = currentUser.userId;
             }
@@ -809,7 +792,6 @@ app.get('/employee', (req, res) => {
             targetUserId = currentUser.userId;
           }
 
-          // 🔒 若处于管理员只读模式，强行隐藏修改相关UI组件
           if (isReadOnlyMode) {
             document.getElementById('readOnlyBanner').classList.remove('hidden');
             document.getElementById('clockArea').classList.add('hidden');
@@ -925,7 +907,6 @@ app.get('/employee', (req, res) => {
               pendingBgBase64 = base64;
               const previewBgBox = document.getElementById('previewBgBox');
               previewBgBox.style.backgroundImage = \`url('\${base64}')\`;
-              previewBgBox.innerText = '';
             });
           }
         }
@@ -939,7 +920,6 @@ app.get('/employee', (req, res) => {
           pendingBgBase64 = "";
           const previewBgBox = document.getElementById('previewBgBox');
           previewBgBox.style.backgroundImage = 'none';
-          previewBgBox.innerText = '默认蓝色背景';
         }
 
         function openThemeModal() {
@@ -952,10 +932,8 @@ app.get('/employee', (req, res) => {
           const previewBgBox = document.getElementById('previewBgBox');
           if (pendingBgBase64 && pendingBgBase64.trim() !== '') {
             previewBgBox.style.backgroundImage = \`url('\${pendingBgBase64}')\`;
-            previewBgBox.innerText = '';
           } else {
             previewBgBox.style.backgroundImage = 'none';
-            previewBgBox.innerText = '默认蓝色背景';
           }
 
           document.getElementById('themeModal').classList.remove('hidden');
