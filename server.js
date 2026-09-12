@@ -39,7 +39,8 @@ const attendanceSchema = new mongoose.Schema({
   clockOut: { type: Date, default: null },
   workHours: { type: Number, default: 0 }, // 存储工时（以小时为单位的小数）
   otHours: { type: Number, default: 0 },   // 存储 OT 时长（以小时为单位的小数）
-  isManual: { type: Boolean, default: false }
+  isManual: { type: Boolean, default: false },
+  remark: { type: String, default: '' }     // 💡 新增备注字段
 });
 const Attendance = mongoose.model('Attendance', attendanceSchema);
 
@@ -243,12 +244,12 @@ app.post('/api/attendance/toggle', async (req, res) => {
   }
 });
 
-// 手动添加/修改记录 API
+// 手动添加/修改记录 API（包含备注参数）
 app.post('/api/attendance/manual', async (req, res) => {
   const user = req.session.user;
   if (!user) return res.status(401).json({ message: '未登录或登录已超时' });
 
-  let { date, clockIn, clockOut, targetUserId } = req.body;
+  let { date, clockIn, clockOut, targetUserId, remark } = req.body;
   if (!date || !clockIn || !clockOut) return res.status(400).json({ message: '请选择完整的日期与时间' });
 
   const updateUserId = (user.role === 'admin' && targetUserId) ? targetUserId : user.userId;
@@ -265,7 +266,16 @@ app.post('/api/attendance/manual', async (req, res) => {
   const { workHours, otHours } = calculateHours(inDateTime, outDateTime);
   await Attendance.findOneAndUpdate(
     { userId: updateUserId, date },
-    { userId: updateUserId, date, clockIn: inDateTime, clockOut: outDateTime, workHours, otHours, isManual: true },
+    { 
+      userId: updateUserId, 
+      date, 
+      clockIn: inDateTime, 
+      clockOut: outDateTime, 
+      workHours, 
+      otHours, 
+      isManual: true,
+      remark: remark || '' // 💡 保存备注
+    },
     { upsert: true, new: true }
   );
 
@@ -613,7 +623,7 @@ app.get('/employee', (req, res) => {
       </style>
     </head>
     <body class="bg-gray-50 min-h-screen p-4 md:p-8">
-      <div class="max-w-4xl mx-auto space-y-6">
+      <div class="max-w-5xl mx-auto space-y-6">
         <div class="flex flex-col sm:flex-row justify-between items-start sm:items-center bg-white p-4 md:p-6 rounded-xl shadow-sm gap-4">
           <div>
             <h1 class="text-xl md:text-2xl font-bold">员工打卡控制台</h1>
@@ -647,10 +657,10 @@ app.get('/employee', (req, res) => {
           </div>
         </div>
 
-        <!-- 📝 补录与修改区域 -->
+        <!-- 📝 补录与修改区域（增加了备注输入框） -->
         <div id="manualArea" class="bg-white p-4 md:p-6 rounded-xl shadow-sm no-print">
           <h3 id="formTitle" class="text-lg font-bold mb-4">添加/修改打卡记录</h3>
-          <div class="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-4 gap-4">
+          <div class="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-5 gap-4">
             <div>
               <label class="text-xs text-gray-400">选择日期</label>
               <input type="text" id="mDate" placeholder="选择日期" class="border p-2 rounded-lg w-full bg-white cursor-pointer">
@@ -662,6 +672,10 @@ app.get('/employee', (req, res) => {
             <div>
               <label class="text-xs text-gray-400">下班时间 (24小时制)</label>
               <input type="text" id="mOut" placeholder="选择下班时间" class="border p-2 rounded-lg w-full bg-white cursor-pointer">
+            </div>
+            <div>
+              <label class="text-xs text-gray-400">备注</label>
+              <input type="text" id="mRemark" placeholder="如: 请假、外勤" class="border p-2 rounded-lg w-full bg-white outline-none focus:ring-2 focus:ring-indigo-500">
             </div>
             <div class="flex items-end">
               <button onclick="addManualRecord()" class="bg-indigo-600 text-white w-full py-2 rounded-lg font-semibold hover:bg-indigo-700 transition">保存记录</button>
@@ -680,14 +694,15 @@ app.get('/employee', (req, res) => {
           </div>
 
           <div class="overflow-x-auto">
-            <table class="w-full text-left border-collapse min-w-[600px]">
+            <table class="w-full text-left border-collapse min-w-[700px]">
               <thead>
                 <tr class="border-b bg-gray-50 text-gray-600 text-sm">
-                  <th class="p-3">日期</th>
+                  <th class="p-3">日期 (星期)</th>
                   <th class="p-3">上班打卡</th>
                   <th class="p-3">下班打卡</th>
                   <th class="p-3">实际工时</th>
                   <th class="p-3">OT 时长</th>
+                  <th class="p-3">备注</th>
                   <th class="p-3">类型</th>
                   <th class="p-3 no-print">操作</th>
                 </tr>
@@ -713,6 +728,18 @@ app.get('/employee', (req, res) => {
         
         let fullHistoryData = [];
         let showAllHistory = false;
+
+        // 💡 星期映射转换
+        const weekDays = ['星期日', '星期一', '星期二', '星期三', '星期四', '星期五', '星期六'];
+
+        function formatDateWithDay(dateStr) {
+          if (!dateStr) return '';
+          // 加上时间避免跨时区解析少一天的问题
+          const d = new Date(dateStr + 'T00:00:00');
+          if (isNaN(d.getTime())) return dateStr;
+          const dayName = weekDays[d.getDay()];
+          return \`\${dateStr} (\${dayName})\`;
+        }
 
         // 💡 前端 5 分钟无操作自动登出逻辑
         (function setupAutoLogout() {
@@ -844,7 +871,7 @@ app.get('/employee', (req, res) => {
           const showMoreBtn = document.getElementById('showMoreBtn');
 
           if (fullHistoryData.length === 0) {
-            table.innerHTML = '<tr><td colspan="7" class="p-4 text-center text-gray-400">该月份暂无打卡记录</td></tr>';
+            table.innerHTML = '<tr><td colspan="8" class="p-4 text-center text-gray-400">该月份暂无打卡记录</td></tr>';
             showMoreContainer.classList.add('hidden');
             return;
           }
@@ -866,18 +893,19 @@ app.get('/employee', (req, res) => {
           table.innerHTML = displayData.map(row => {
             const inTime24 = formatTo24HourTime(row.clockIn);
             const outTime24 = formatTo24HourTime(row.clockOut);
+            const dateWithDay = formatDateWithDay(row.date);
             
             return \`
               <tr>
-                <td class="p-3 font-medium">\${row.date}</td>
+                <td class="p-3 font-medium">\${dateWithDay}</td>
                 <td class="p-3">\${inTime24 || '-'}</td>
                 <td class="p-3">\${outTime24 || '-'}</td>
-                <!-- 💡 此处以几小时几分钟展示 -->
                 <td class="p-3 font-semibold text-blue-600">\${formatDuration(row.workHours)}</td>
                 <td class="p-3 font-semibold text-orange-600">\${formatDuration(row.otHours)}</td>
+                <td class="p-3 text-gray-600">\${row.remark || '-'}</td>
                 <td class="p-3"><span class="px-2 py-1 text-xs rounded \${row.isManual ? 'bg-purple-100 text-purple-700' : 'bg-gray-100 text-gray-600'}">\${row.isManual ? '手动补录/修改' : '实时打卡'}</span></td>
                 <td class="p-3 no-print space-x-2">
-                  <button onclick="editRow('\${row.date}', '\${inTime24}', '\${outTime24}')" class="text-indigo-600 hover:text-indigo-900 font-semibold text-xs border border-indigo-200 px-2 py-1 rounded hover:bg-indigo-50 transition">✏️ 修改</button>
+                  <button onclick="editRow('\${row.date}', '\${inTime24}', '\${outTime24}', '\${encodeURIComponent(row.remark || '')}')" class="text-indigo-600 hover:text-indigo-900 font-semibold text-xs border border-indigo-200 px-2 py-1 rounded hover:bg-indigo-50 transition">✏️ 修改</button>
                   <button onclick="deleteRow('\${row.date}')" class="text-red-600 hover:text-red-900 font-semibold text-xs border border-red-200 px-2 py-1 rounded hover:bg-red-50 transition">🗑️ 删除</button>
                 </td>
               </tr>
@@ -895,10 +923,11 @@ app.get('/employee', (req, res) => {
           loadAttendanceData();
         }
 
-        function editRow(date, clockIn, clockOut) {
+        function editRow(date, clockIn, clockOut, encodedRemark) {
           pickerDate.setDate(date);
           pickerIn.setDate(clockIn);
           pickerOut.setDate(clockOut);
+          document.getElementById('mRemark').value = decodeURIComponent(encodedRemark);
           
           const targetArea = document.getElementById('manualArea');
           targetArea.scrollIntoView({ behavior: 'smooth' });
@@ -930,6 +959,7 @@ app.get('/employee', (req, res) => {
           const date = document.getElementById('mDate').value;
           const clockIn = document.getElementById('mIn').value;
           const clockOut = document.getElementById('mOut').value;
+          const remark = document.getElementById('mRemark').value;
           
           if (!date || !clockIn || !clockOut) {
             return alert('请完整选择日期以及具体的上下班时间！');
@@ -938,7 +968,7 @@ app.get('/employee', (req, res) => {
           const res = await fetch('/api/attendance/manual', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ date, clockIn, clockOut, targetUserId })
+            body: JSON.stringify({ date, clockIn, clockOut, targetUserId, remark })
           });
           const data = await res.json();
           alert(data.message);
@@ -946,6 +976,7 @@ app.get('/employee', (req, res) => {
             pickerDate.clear();
             pickerIn.clear();
             pickerOut.clear();
+            document.getElementById('mRemark').value = '';
             loadAttendanceData();
           }
         }
